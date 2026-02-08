@@ -125,7 +125,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border-2 p-6 md:p-8 bg-gradient-to-br ${bgGradient} ${borderColor} ${glowColor} transition-all duration-700`}
+      className={`relative overflow-hidden rounded-2xl border-2 p-4 md:p-6 bg-gradient-to-br ${bgGradient} ${borderColor} ${glowColor} transition-all duration-700`}
     >
       {/* Animated background pulse */}
       {isActive && (
@@ -136,8 +136,8 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
 
       <div className="relative z-10">
         {/* Signal Direction */}
-        <div className="text-center mb-5">
-          <div className="text-[10px] text-slate-500 uppercase tracking-[0.4em] mb-3 font-semibold">
+        <div className="text-center mb-3">
+          <div className="text-[10px] text-slate-500 uppercase tracking-[0.4em] mb-2 font-semibold">
             R_50 Signal • 5 Min Expiry
           </div>
           <div
@@ -183,7 +183,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
 
         {/* Strength & Confidence */}
         {isActive && (
-          <div className="flex items-center justify-center gap-4 sm:gap-6 mb-4">
+          <div className="flex items-center justify-center gap-4 sm:gap-6 mb-3">
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Strength</div>
               <div
