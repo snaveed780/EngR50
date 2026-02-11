@@ -775,21 +775,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
   }
 
   // 6) The Candle Trap
-  const candleTrapSetup = detectCandleTrap(candles, ema21, rsi6);
-  indicators.push({
-    name: candleTrapSetup.setupName,
-    direction: candleTrapSetup.signal,
-    confidence: candleTrapSetup.confidence,
-    detail: `${candleTrapSetup.reason} · Grade ${candleTrapSetup.grade ?? '—'}`,
-    weight: 1,
-    values: {
-      ...candleTrapSetup.indicators,
-      entryPrice: candleTrapSetup.entryPrice,
-      takeProfit: candleTrapSetup.takeProfit,
-      stopLoss: candleTrapSetup.stopLoss,
-      grade: candleTrapSetup.grade,
-    },
-  });
+
 
   const riseCount = indicators.filter(i => i.direction === 'RISE').length;
   const fallCount = indicators.filter(i => i.direction === 'FALL').length;
