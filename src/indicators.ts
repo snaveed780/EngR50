@@ -504,3 +504,178 @@ export function calcADX(candles: Candle[], period = 14): ADXResult | null {
     bullishDI: lastPDI > lastMDI,
   };
 }
+
+// ─── Shared Generic Helpers for New Setups ─────────────────────────────────
+
+export function calcEMAValues(candles: Candle[], period: number): number[] {
+  if (candles.length === 0) return [];
+  const closes = candles.map(c => c.close);
+  return ema(closes, period);
+}
+
+export function calcRSISeries(candles: Candle[], period: number): number[] {
+  if (candles.length < period + 1) return [];
+
+  const closes = candles.map(c => c.close);
+  const rsiSeries: number[] = new Array(candles.length).fill(NaN);
+
+  let avgGain = 0;
+  let avgLoss = 0;
+
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) avgGain += diff;
+    else avgLoss += Math.abs(diff);
+  }
+
+  avgGain /= period;
+  avgLoss /= period;
+
+  const firstRS = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  rsiSeries[period] = 100 - 100 / (1 + firstRS);
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + (diff > 0 ? diff : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (diff < 0 ? Math.abs(diff) : 0)) / period;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsiSeries[i] = 100 - 100 / (1 + rs);
+  }
+
+  return rsiSeries;
+}
+
+export interface StochasticResult {
+  k: number;
+  d: number;
+  previousK: number;
+  previousD: number;
+}
+
+export function calcStochastic(
+  candles: Candle[],
+  kPeriod = 5,
+  dPeriod = 3,
+  slowing = 3
+): StochasticResult | null {
+  if (candles.length < kPeriod + dPeriod + slowing) return null;
+
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+  const closes = candles.map(c => c.close);
+
+  const rawK: number[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    if (i < kPeriod - 1) {
+      rawK.push(NaN);
+      continue;
+    }
+
+    const hh = highestHigh(highs, kPeriod, i);
+    const ll = lowestLow(lows, kPeriod, i);
+    rawK.push(hh === ll ? 50 : ((closes[i] - ll) / (hh - ll)) * 100);
+  }
+
+  const filteredRawK = rawK.filter(v => !Number.isNaN(v));
+  const smoothK = sma(filteredRawK, slowing).filter(v => !Number.isNaN(v));
+  const dLine = sma(smoothK, dPeriod).filter(v => !Number.isNaN(v));
+
+  if (smoothK.length < 2 || dLine.length < 2) return null;
+
+  const k = smoothK[smoothK.length - 1];
+  const previousK = smoothK[smoothK.length - 2];
+  const d = dLine[dLine.length - 1];
+  const previousD = dLine[dLine.length - 2];
+
+  return { k, d, previousK, previousD };
+}
+
+export interface MACDSeriesResult {
+  macd: number;
+  signal: number;
+  histogram: number;
+  previousMacd: number;
+  previousSignal: number;
+  previousHistogram: number;
+}
+
+export function calcMACDSeries(
+  candles: Candle[],
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9
+): MACDSeriesResult | null {
+  if (candles.length < slowPeriod + signalPeriod + 2) return null;
+
+  const closes = candles.map(c => c.close);
+  const emaFast = ema(closes, fastPeriod);
+  const emaSlow = ema(closes, slowPeriod);
+  const macdLine = emaFast.map((v, i) => v - emaSlow[i]);
+  const signalLine = ema(macdLine, signalPeriod);
+
+  const last = macdLine.length - 1;
+  const prev = last - 1;
+
+  return {
+    macd: macdLine[last],
+    signal: signalLine[last],
+    histogram: macdLine[last] - signalLine[last],
+    previousMacd: macdLine[prev],
+    previousSignal: signalLine[prev],
+    previousHistogram: macdLine[prev] - signalLine[prev],
+  };
+}
+
+export interface SRLevelResult {
+  supports: number[];
+  resistances: number[];
+  nearestSupport: number | null;
+  nearestResistance: number | null;
+}
+
+export function calcSwingSupportResistance(
+  candles: Candle[],
+  lookback = 100,
+  touchTolerancePct = 0.05,
+  minTouches = 2
+): SRLevelResult {
+  const slice = candles.slice(-lookback);
+  if (slice.length < 10) {
+    return { supports: [], resistances: [], nearestSupport: null, nearestResistance: null };
+  }
+
+  const groups: { level: number; touches: number }[] = [];
+
+  const groupLevel = (price: number) => {
+    const tolerance = price * (touchTolerancePct / 100);
+    const existing = groups.find(g => Math.abs(g.level - price) <= tolerance);
+    if (existing) {
+      existing.level = (existing.level * existing.touches + price) / (existing.touches + 1);
+      existing.touches += 1;
+    } else {
+      groups.push({ level: price, touches: 1 });
+    }
+  };
+
+  for (let i = 2; i < slice.length - 2; i++) {
+    const c = slice[i];
+    const prev = slice[i - 1];
+    const next = slice[i + 1];
+
+    if (c.low <= prev.low && c.low <= next.low) groupLevel(c.low);
+    if (c.high >= prev.high && c.high >= next.high) groupLevel(c.high);
+  }
+
+  const valid = groups.filter(g => g.touches >= minTouches).map(g => g.level).sort((a, b) => a - b);
+  const close = slice[slice.length - 1].close;
+
+  const supports = valid.filter(v => v <= close);
+  const resistances = valid.filter(v => v >= close);
+
+  return {
+    supports,
+    resistances,
+    nearestSupport: supports.length ? supports[supports.length - 1] : null,
+    nearestResistance: resistances.length ? resistances[0] : null,
+  };
+}
