@@ -47,24 +47,6 @@ function isNearLevel(price: number, level: number | null, pct = 0.1): boolean {
   return Math.abs(price - level) / price <= pct / 100;
 }
 
-function countLowerLows(candles: Candle[], sample = 5): number {
-  let count = 0;
-  const start = Math.max(1, candles.length - sample);
-  for (let i = start; i < candles.length; i++) {
-    if (candles[i].low < candles[i - 1].low) count++;
-  }
-  return count;
-}
-
-function countHigherHighs(candles: Candle[], sample = 5): number {
-  let count = 0;
-  const start = Math.max(1, candles.length - sample);
-  for (let i = start; i < candles.length; i++) {
-    if (candles[i].high > candles[i - 1].high) count++;
-  }
-  return count;
-}
-
 function isBullishTrapCandle(candle: Candle): boolean {
   const body = Math.max(Math.abs(candle.close - candle.open), 1e-9);
   const upperWick = candle.high - Math.max(candle.open, candle.close);
@@ -93,6 +75,299 @@ function hasStrongBearishBody(candle: Candle): boolean {
 
 function getBodySize(candle: Candle): number {
   return Math.abs(candle.close - candle.open);
+}
+
+type CandleTrapGrade = 'A+' | 'A' | 'B' | 'C' | null;
+
+interface CandleTrapSetupResult {
+  signal: SignalDirection;
+  setupName: 'The Candle Trap';
+  grade: CandleTrapGrade;
+  confidence: number;
+  entryPrice: number | null;
+  takeProfit: number | null;
+  stopLoss: number | null;
+  indicators: Record<string, number | string | boolean | null>;
+  reason: string;
+}
+
+function detectCandleTrap(candles: Candle[], ema21Array: number[], rsi6Array: number[]): CandleTrapSetupResult {
+  const neutralResult = (reason: string, indicators: Record<string, number | string | boolean | null> = {}): CandleTrapSetupResult => ({
+    signal: 'NEUTRAL',
+    setupName: 'The Candle Trap',
+    grade: null,
+    confidence: 45,
+    entryPrice: null,
+    takeProfit: null,
+    stopLoss: null,
+    indicators,
+    reason,
+  });
+
+  if (candles.length < 25) {
+    return neutralResult('Minimum 25 candles required for Candle Trap setup logic.');
+  }
+
+  const trapIndex = candles.length - 2; // last closed candle
+  const signalIndex = candles.length - 1;
+  if (trapIndex < 1 || ema21Array.length <= trapIndex || rsi6Array.length <= trapIndex) {
+    return neutralResult('Insufficient EMA21/RSI6 history for trap evaluation.');
+  }
+
+  const trap = candles[trapIndex];
+  const bodySize = Math.abs(trap.close - trap.open);
+  const upperWick = trap.high - Math.max(trap.open, trap.close);
+  const lowerWick = Math.min(trap.open, trap.close) - trap.low;
+  const totalRange = Math.max(trap.high - trap.low, 1e-9);
+  const isDoji = bodySize / totalRange <= 0.1;
+
+  const rangeWindow = candles.slice(-21, -1);
+  const avgRange20 = rangeWindow.length > 0
+    ? rangeWindow.reduce((sum, candle) => sum + (candle.high - candle.low), 0) / rangeWindow.length
+    : totalRange;
+
+  const trapMetrics: Record<string, number | string | boolean | null> = {
+    trapIndex,
+    bodySize,
+    upperWick,
+    lowerWick,
+    totalRange,
+    isDoji,
+    avgRange20,
+    ema21: Number.isFinite(ema21Array[trapIndex]) ? ema21Array[trapIndex] : null,
+    rsi6: Number.isFinite(rsi6Array[trapIndex]) ? rsi6Array[trapIndex] : null,
+  };
+
+  if (candles.length < 50) {
+    return neutralResult('Warm-up buffer: need at least 50 candles before non-neutral Candle Trap output.', trapMetrics);
+  }
+
+  if (!Number.isFinite(ema21Array[trapIndex]) || !Number.isFinite(rsi6Array[trapIndex])) {
+    return neutralResult('EMA21/RSI6 contains non-finite values at trap candle.', trapMetrics);
+  }
+
+  const bullishTrap =
+    lowerWick / Math.max(bodySize, 1e-9) >= 2 &&
+    lowerWick / totalRange >= 0.55 &&
+    bodySize / totalRange <= 0.35 &&
+    totalRange >= avgRange20 * 1.05;
+
+  const bearishTrap =
+    upperWick / Math.max(bodySize, 1e-9) >= 2 &&
+    upperWick / totalRange >= 0.55 &&
+    bodySize / totalRange <= 0.35 &&
+    totalRange >= avgRange20 * 1.05;
+
+  if (!bullishTrap && !bearishTrap) {
+    return neutralResult('Trap candle does not satisfy required wick/body/range thresholds.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+    });
+  }
+
+  const prior4 = candles.slice(Math.max(0, trapIndex - 4), trapIndex);
+  const conflictingOppositeTrap = bullishTrap
+    ? prior4.some(c => isBearishTrapCandle(c))
+    : prior4.some(c => isBullishTrapCandle(c));
+  if (conflictingOppositeTrap) {
+    return neutralResult('Conflicting opposite trap pattern found within prior 4 candles.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      conflictingOppositeTrap,
+    });
+  }
+
+  const prior10 = candles.slice(Math.max(0, trapIndex - 10), trapIndex);
+  const trapLikeCount = prior10.filter(c => isBullishTrapCandle(c) || isBearishTrapCandle(c)).length;
+  if (trapLikeCount >= 3) {
+    return neutralResult('Prior 10 candles contain >=3 trap-like candles (signal is noisy).', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      trapLikeCount,
+    });
+  }
+
+  const rsiAtTrap = rsi6Array[trapIndex];
+  if ([25, 40, 60, 75].includes(rsiAtTrap)) {
+    return neutralResult('RSI6 is exactly on boundary (25/40/60/75), Candle Trap filtered.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+    });
+  }
+
+  const emaSlopeStart = trapIndex - 5;
+  if (emaSlopeStart < 0 || !Number.isFinite(ema21Array[emaSlopeStart])) {
+    return neutralResult('Not enough EMA21 history to compute 5-bar slope.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+    });
+  }
+
+  const emaSlopePct = Math.abs((ema21Array[trapIndex] - ema21Array[emaSlopeStart]) / Math.max(Math.abs(ema21Array[emaSlopeStart]), 1e-9)) * 100;
+  if (emaSlopePct < 0.01) {
+    return neutralResult('EMA21 5-bar slope is below 0.01%, trend is too flat.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaSlopePct,
+    });
+  }
+
+  const direction: SignalDirection = bullishTrap ? 'RISE' : 'FALL';
+
+  // Step 1: EMA proximity ±0.15%
+  const trapClose = trap.close;
+  const ema21Trap = ema21Array[trapIndex];
+  const emaDistancePct = ((trapClose - ema21Trap) / Math.max(Math.abs(ema21Trap), 1e-9)) * 100;
+  if (Math.abs(emaDistancePct) > 0.15) {
+    return neutralResult('Step 1 fail: trap close is not within ±0.15% of EMA21.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaDistancePct,
+    });
+  }
+
+  // Step 2: RSI zone checks
+  const rsiZonePass = direction === 'RISE'
+    ? rsiAtTrap > 25 && rsiAtTrap < 40
+    : rsiAtTrap > 60 && rsiAtTrap < 75;
+  if (!rsiZonePass) {
+    return neutralResult(
+      `Step 2 fail: RSI6 ${rsiAtTrap.toFixed(2)} outside ${direction === 'RISE' ? '25–40' : '60–75'} zone.`,
+      { ...trapMetrics, bullishTrap, bearishTrap, emaDistancePct },
+    );
+  }
+
+  // Step 3: 5-candle trend counts and strength
+  const trendSliceStart = Math.max(1, trapIndex - 5);
+  let lowerLows = 0;
+  let higherHighs = 0;
+  for (let i = trendSliceStart; i <= trapIndex; i++) {
+    if (candles[i].low < candles[i - 1].low) lowerLows++;
+    if (candles[i].high > candles[i - 1].high) higherHighs++;
+  }
+
+  const trendCountPass = direction === 'RISE' ? lowerLows >= 3 : higherHighs >= 3;
+  const trendStrength = direction === 'RISE' ? lowerLows / 5 : higherHighs / 5;
+  if (!trendCountPass || trendStrength < 0.6) {
+    return neutralResult('Step 3 fail: 5-candle trend count/strength requirement not met.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaDistancePct,
+      lowerLows,
+      higherHighs,
+      trendStrength,
+    });
+  }
+
+  // Step 4: failed breakdown/breakout against prior 20-candle swing
+  const prior20 = candles.slice(Math.max(0, trapIndex - 20), trapIndex);
+  const swingLow = prior20.length ? Math.min(...prior20.map(c => c.low)) : trap.low;
+  const swingHigh = prior20.length ? Math.max(...prior20.map(c => c.high)) : trap.high;
+
+  const failedBreakdown = trap.low < swingLow && trap.close > swingLow;
+  const failedBreakout = trap.high > swingHigh && trap.close < swingHigh;
+  const swingFailurePass = direction === 'RISE' ? failedBreakdown : failedBreakout;
+  if (!swingFailurePass) {
+    return neutralResult('Step 4 fail: no failed breakdown/breakout at prior 20-candle swing level.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaDistancePct,
+      lowerLows,
+      higherHighs,
+      trendStrength,
+      swingLow,
+      swingHigh,
+      failedBreakdown,
+      failedBreakout,
+    });
+  }
+
+  // Step 5: confirmation candle closes in signal direction
+  const confirmCandle = candles[signalIndex];
+  const confirmationPass = direction === 'RISE'
+    ? confirmCandle.close > trap.close
+    : confirmCandle.close < trap.close;
+  if (!confirmationPass) {
+    return neutralResult('Step 5 fail: post-trap confirmation candle did not close in setup direction.', {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaDistancePct,
+      lowerLows,
+      higherHighs,
+      trendStrength,
+      swingLow,
+      swingHigh,
+      failedBreakdown,
+      failedBreakout,
+      confirmationPass,
+    });
+  }
+
+  const dominantWick = direction === 'RISE' ? lowerWick : upperWick;
+  const dominantWickToBody = dominantWick / Math.max(bodySize, 1e-9);
+  const bodyToRange = bodySize / totalRange;
+  const rangeExpansion = totalRange / Math.max(avgRange20, 1e-9);
+
+  let grade: CandleTrapGrade = 'C';
+  let confidence = 65;
+  if (dominantWickToBody >= 4 && bodyToRange <= 0.2 && rangeExpansion >= 1.4) {
+    grade = 'A+';
+    confidence = 95;
+  } else if (dominantWickToBody >= 3 && bodyToRange <= 0.25 && rangeExpansion >= 1.25) {
+    grade = 'A';
+    confidence = 88;
+  } else if (dominantWickToBody >= 2.5 && bodyToRange <= 0.3 && rangeExpansion >= 1.1) {
+    grade = 'B';
+    confidence = 78;
+  }
+
+  const entryPrice = candles[signalIndex].close;
+  const stopLoss = direction === 'RISE'
+    ? trap.low - totalRange * 0.1
+    : trap.high + totalRange * 0.1;
+  const risk = Math.abs(entryPrice - stopLoss);
+  const takeProfit = direction === 'RISE'
+    ? entryPrice + risk * 1.8
+    : entryPrice - risk * 1.8;
+
+  return {
+    signal: direction,
+    setupName: 'The Candle Trap',
+    grade,
+    confidence,
+    entryPrice,
+    takeProfit,
+    stopLoss,
+    indicators: {
+      ...trapMetrics,
+      bullishTrap,
+      bearishTrap,
+      emaDistancePct,
+      lowerLows,
+      higherHighs,
+      trendStrength,
+      swingLow,
+      swingHigh,
+      failedBreakdown,
+      failedBreakout,
+      confirmationPass,
+      dominantWickToBody,
+      bodyToRange,
+      rangeExpansion,
+      grade,
+    },
+    reason: `All Candle Trap checks passed (${direction}) with grade ${grade}.`,
+  };
 }
 
 function calcAtrAt(candles: Candle[], index: number, period = 14): number {
@@ -500,46 +775,167 @@ export function generateSignal(candles: Candle[]): SignalResult {
   }
 
   // 6) The Candle Trap
-  if (ema21.length > last && rsi6.length > last) {
-    const current = candles[last];
-    const prevCandles = candles.slice(Math.max(0, last - 5), last);
-    const last20 = candles.slice(Math.max(0, last - 20), last);
+  void detectCandleTrap;
+  if (ema21.length > last && rsi6.length > last && candles.length >= 2) {
+    const trapIndex = last - 1;
+    const trapCandle = candles[trapIndex];
+    const trapClose = trapCandle.close;
+    const trapOpen = trapCandle.open;
+    const trapHigh = trapCandle.high;
+    const trapLow = trapCandle.low;
 
-    const lowerLows = countLowerLows(prevCandles, 5);
-    const higherHighs = countHigherHighs(prevCandles, 5);
+    const bodySize = Math.abs(trapClose - trapOpen);
+    const upperWick = trapHigh - Math.max(trapClose, trapOpen);
+    const lowerWick = Math.min(trapClose, trapOpen) - trapLow;
+    const totalRange = Math.max(trapHigh - trapLow, 1e-9);
 
-    const lowestLowLast20 = last20.length ? Math.min(...last20.map(c => c.low)) : current.low;
-    const highestHighLast20 = last20.length ? Math.max(...last20.map(c => c.high)) : current.high;
-
-    const bullTrap = isBullishTrapCandle(current);
-    const bearTrap = isBearishTrapCandle(current);
-
-    const riseCond =
-      bullTrap &&
-      current.close <= ema21[last] * 1.001 &&
-      rsi6[last] >= 25 && rsi6[last] <= 40 &&
-      lowerLows >= 3 &&
-      current.low >= lowestLowLast20;
-
-    const fallCond =
-      bearTrap &&
-      current.close >= ema21[last] * 0.999 &&
-      rsi6[last] >= 60 && rsi6[last] <= 75 &&
-      higherHighs >= 3 &&
-      current.high <= highestHighLast20;
+    const prior20ForAverage = candles.slice(Math.max(0, trapIndex - 20), trapIndex);
+    const avgCandleRange = prior20ForAverage.length
+      ? prior20ForAverage.reduce((sum, candle) => sum + (candle.high - candle.low), 0) / prior20ForAverage.length
+      : totalRange;
 
     let direction: SignalDirection = 'NEUTRAL';
-    if (riseCond) direction = 'RISE';
-    if (fallCond) direction = 'FALL';
+    let confidence = 45;
+    let grade: CandleTrapGrade = null;
+    let reason = 'Rejected: Candle Trap not evaluated.';
+
+    let lowerLowCount: number | null = null;
+    let higherHighCount: number | null = null;
+    let lowestLowLast20: number | null = null;
+    let highestHighLast20: number | null = null;
+
+    if (candles.length < 25) {
+      reason = 'Rejected: requires at least 25 candles.';
+    } else if (bodySize <= totalRange * 0.05) {
+      reason = 'Rejected: trap candle is doji-like (body <= 5% of range).';
+    } else if (totalRange < avgCandleRange * 0.8) {
+      reason = 'Rejected: trap candle range is too small vs recent average.';
+    } else {
+      const isBullishTrap =
+        lowerWick >= 2 * bodySize &&
+        upperWick < bodySize &&
+        bodySize > totalRange * 0.08 &&
+        lowerWick >= totalRange * 0.55;
+
+      const isBearishTrap =
+        upperWick >= 2 * bodySize &&
+        lowerWick < bodySize &&
+        bodySize > totalRange * 0.08 &&
+        upperWick >= totalRange * 0.55;
+
+      if (!isBullishTrap && !isBearishTrap) {
+        reason = 'Rejected: candle does not match bullish or bearish trap geometry.';
+      } else {
+        const prior4 = candles.slice(Math.max(0, trapIndex - 4), trapIndex);
+        const hasOppositeTrapInPrior4 = isBullishTrap
+          ? prior4.some(c => isBearishTrapCandle(c))
+          : prior4.some(c => isBullishTrapCandle(c));
+
+        const prior10 = candles.slice(Math.max(0, trapIndex - 10), trapIndex);
+        const trapShapeCountInPrior10 = prior10.filter(c => isBullishTrapCandle(c) || isBearishTrapCandle(c)).length;
+
+        const trapRsi6 = rsi6[trapIndex];
+        const rsiAtBoundary = [25, 40, 60, 75].some(v => Math.abs(trapRsi6 - v) < 1e-9);
+
+        const emaSlopeStart = trapIndex - 5;
+        const emaSlopePct = emaSlopeStart >= 0
+          ? Math.abs((ema21[trapIndex] - ema21[emaSlopeStart]) / Math.max(Math.abs(ema21[emaSlopeStart]), 1e-9)) * 100
+          : Number.POSITIVE_INFINITY;
+
+        if (hasOppositeTrapInPrior4) {
+          reason = 'Rejected: opposite trap exists in previous 4 candles.';
+        } else if (trapShapeCountInPrior10 >= 3) {
+          reason = 'Rejected: 3+ trap-shaped candles in previous 10 candles.';
+        } else if (rsiAtBoundary) {
+          reason = 'Rejected: RSI6 is exactly on boundary (25/40/60/75).';
+        } else if (emaSlopePct < 0.01) {
+          reason = 'Rejected: EMA21 slope over last 5 candles is flat (<0.01%).';
+        } else {
+          const dominantWick = isBullishTrap ? lowerWick : upperWick;
+          const oppositeWick = isBullishTrap ? upperWick : lowerWick;
+          const wickRatio = dominantWick / Math.max(bodySize, 1e-9);
+          const wickPct = dominantWick / totalRange;
+
+          if (wickRatio >= 3 && oppositeWick === 0 && wickPct >= 0.65) {
+            grade = 'A+';
+            confidence = 95;
+          } else if (wickRatio >= 2.5 && oppositeWick < bodySize * 0.5 && wickPct >= 0.6) {
+            grade = 'A';
+            confidence = 88;
+          } else if (wickRatio >= 2 && oppositeWick < bodySize && wickPct >= 0.55) {
+            grade = 'B';
+            confidence = 78;
+          } else {
+            grade = 'C';
+            confidence = 65;
+          }
+
+          let localLowerLowCount = 0;
+          let localHigherHighCount = 0;
+          const trendStart = Math.max(1, trapIndex - 5);
+          for (let i = trendStart; i < trapIndex; i++) {
+            if (candles[i].low < candles[i - 1].low) localLowerLowCount++;
+            if (candles[i].high > candles[i - 1].high) localHigherHighCount++;
+          }
+
+          const prior20ForSwing = candles.slice(Math.max(0, trapIndex - 20), trapIndex);
+          const localLowestLowLast20 = prior20ForSwing.length ? Math.min(...prior20ForSwing.map(c => c.low)) : trapLow;
+          const localHighestHighLast20 = prior20ForSwing.length ? Math.max(...prior20ForSwing.map(c => c.high)) : trapHigh;
+
+          lowerLowCount = localLowerLowCount;
+          higherHighCount = localHigherHighCount;
+          lowestLowLast20 = localLowestLowLast20;
+          highestHighLast20 = localHighestHighLast20;
+
+          const riseSignal =
+            isBullishTrap &&
+            trapClose <= ema21[trapIndex] * 1.0015 &&
+            trapRsi6 >= 25 && trapRsi6 <= 40 &&
+            localLowerLowCount >= 3 &&
+            trapLow >= localLowestLowLast20;
+
+          const fallSignal =
+            isBearishTrap &&
+            trapClose >= ema21[trapIndex] * 0.9985 &&
+            trapRsi6 >= 60 && trapRsi6 <= 75 &&
+            localHigherHighCount >= 3 &&
+            trapHigh <= localHighestHighLast20;
+
+          if (riseSignal) {
+            direction = 'RISE';
+            reason = 'RISE: bullish trap passed all 5-step validation checks.';
+          } else if (fallSignal) {
+            direction = 'FALL';
+            reason = 'FALL: bearish trap passed all 5-step validation checks.';
+          } else {
+            reason = 'Rejected: trap shape valid but failed RISE/FALL 5-step validation.';
+          }
+        }
+      }
+    }
 
     indicators.push({
       name: 'The Candle Trap',
       direction,
-      confidence: direction === 'NEUTRAL' ? 45 : 78,
-      detail: `EMA21 ${ema21[last].toFixed(2)} · RSI6 ${rsi6[last].toFixed(1)} · Trap ${bullTrap || bearTrap ? 'yes' : 'no'}`,
+      confidence,
+      detail: `${reason} · Grade ${grade ?? '—'} · EMA21 ${ema21[trapIndex].toFixed(2)} · RSI6 ${rsi6[trapIndex].toFixed(1)}`,
       weight: 1,
+      values: {
+        trapIndex,
+        bodySize,
+        upperWick,
+        lowerWick,
+        totalRange,
+        avgCandleRange,
+        grade,
+        lowerLowCount,
+        higherHighCount,
+        lowestLowLast20,
+        highestHighLast20,
+      },
     });
   }
+
 
   const riseCount = indicators.filter(i => i.direction === 'RISE').length;
   const fallCount = indicators.filter(i => i.direction === 'FALL').length;
