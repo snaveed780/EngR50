@@ -1,79 +1,109 @@
-import type { Candle } from './indicators';
+import type { Candle, IchimokuResult, SRLevelResult, StochasticResult, MACDSeriesResult } from './indicators';
 import {
   calcIchimoku,
-  calcBollinger,
-  calcRSI,
-  calcStochRSI,
-  calcATR,
-  calcMACD,
-  calcMA,
-  calcADX,
-  calcSupportResistance,
-  type IchimokuResult,
-  type BollingerResult,
-  type RSIResult,
-  type StochRSIResult,
-  type ATRResult,
-  type MACDResult,
-  type MAResult,
-  type ADXResult,
-  type SupportResistanceResult,
+  calcEMAValues,
+  calcRSISeries,
+  calcStochastic,
+  calcMACDSeries,
+  calcSwingSupportResistance,
 } from './indicators';
 
-// ─── Signal Types ────────────────────────────────────────────────────────────
-
-export type SignalDirection = 'RISE' | 'FALL' | 'WAIT' | 'SIDEWAYS';
+export type SignalDirection = 'RISE' | 'FALL' | 'NEUTRAL';
 export type SignalStrength = 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE';
 
 export interface IndicatorSignal {
   name: string;
-  direction: 'RISE' | 'FALL' | 'NEUTRAL';
-  confidence: number; // 0-100
+  direction: SignalDirection;
+  confidence: number;
   detail: string;
-  weight: number; // importance weight
+  weight: number;
+  isStrongSignal?: boolean;
+  values?: Record<string, number | string | boolean | null>;
 }
 
 export interface SignalResult {
   direction: SignalDirection;
   strength: SignalStrength;
-  confidence: number; // overall confidence 0-100
+  confidence: number;
+  confidenceScore: string;
+  combinedLabel: 'STRONG RISE' | 'RISE' | 'WEAK RISE' | 'NEUTRAL' | 'WEAK FALL' | 'FALL' | 'STRONG FALL';
   indicators: IndicatorSignal[];
   riseCount: number;
   fallCount: number;
   neutralCount: number;
   timestamp: number;
   ichimoku: IchimokuResult | null;
-  bollinger: BollingerResult | null;
-  rsi: RSIResult | null;
-  stochRSI: StochRSIResult | null;
-  atr: ATRResult | null;
-  macd: MACDResult | null;
-  ma: MAResult | null;
-  adx: ADXResult | null;
-  supportResistance: SupportResistanceResult | null;
+  supportResistance: SRLevelResult;
+  stochastic: StochasticResult | null;
+  macdTrend: MACDSeriesResult | null;
+  ema21: number | null;
+  ema50: number | null;
+  rsi7: number | null;
   reason: string;
 }
 
-// ─── Signal Engine ───────────────────────────────────────────────────────────
+function isNearLevel(price: number, level: number | null, pct = 0.1): boolean {
+  if (!level || price <= 0) return false;
+  return Math.abs(price - level) / price <= pct / 100;
+}
+
+function countLowerLows(candles: Candle[], sample = 5): number {
+  let count = 0;
+  const start = Math.max(1, candles.length - sample);
+  for (let i = start; i < candles.length; i++) {
+    if (candles[i].low < candles[i - 1].low) count++;
+  }
+  return count;
+}
+
+function countHigherHighs(candles: Candle[], sample = 5): number {
+  let count = 0;
+  const start = Math.max(1, candles.length - sample);
+  for (let i = start; i < candles.length; i++) {
+    if (candles[i].high > candles[i - 1].high) count++;
+  }
+  return count;
+}
+
+function isBullishTrapCandle(candle: Candle): boolean {
+  const body = Math.max(Math.abs(candle.close - candle.open), 1e-9);
+  const upperWick = candle.high - Math.max(candle.open, candle.close);
+  const lowerWick = Math.min(candle.open, candle.close) - candle.low;
+  return lowerWick >= body * 2 && upperWick <= body;
+}
+
+function isBearishTrapCandle(candle: Candle): boolean {
+  const body = Math.max(Math.abs(candle.close - candle.open), 1e-9);
+  const upperWick = candle.high - Math.max(candle.open, candle.close);
+  const lowerWick = Math.min(candle.open, candle.close) - candle.low;
+  return upperWick >= body * 2 && lowerWick <= body;
+}
 
 export function generateSignal(candles: Candle[]): SignalResult {
   const indicators: IndicatorSignal[] = [];
+  const last = candles.length - 1;
+  const prev = Math.max(0, last - 1);
+  const close = candles[last]?.close ?? 0;
 
-  // Calculate all indicators
   const ichimoku = calcIchimoku(candles);
-  const bollinger = calcBollinger(candles);
-  const rsi = calcRSI(candles);
-  const stochRSI = calcStochRSI(candles);
-  const atr = calcATR(candles);
-  const macd = calcMACD(candles);
-  const ma = calcMA(candles);
-  const adx = calcADX(candles);
-  const supportResistance = calcSupportResistance(candles, 30);
 
-  // ─── 1. ICHIMOKU CLOUD (Primary - weight 2.0) ──────────────────────────
+  const ema5 = calcEMAValues(candles, 5);
+  const ema9 = calcEMAValues(candles, 9);
+  const ema13 = calcEMAValues(candles, 13);
+  const ema21 = calcEMAValues(candles, 21);
+  const ema50 = calcEMAValues(candles, 50);
 
+  const rsi3 = calcRSISeries(candles, 3);
+  const rsi6 = calcRSISeries(candles, 6);
+  const rsi7Series = calcRSISeries(candles, 7);
+
+  const stochastic = calcStochastic(candles, 5, 3, 3);
+  const macdTrend = calcMACDSeries(candles, 6, 13, 5);
+  const supportResistance = calcSwingSupportResistance(candles, 100, 0.05, 2);
+
+  // 1) Ichimoku unchanged logic
   if (ichimoku) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
+    let direction: SignalDirection = 'NEUTRAL';
     let confidence = 40;
     const details: string[] = [];
 
@@ -121,425 +151,197 @@ export function generateSignal(candles: Candle[]): SignalResult {
       direction,
       confidence: Math.min(confidence, 95),
       detail: details.join(' · '),
-      weight: 2.0,
+      weight: 1,
+      values: {
+        tenkan: ichimoku.tenkanSen.toFixed(2),
+        kijun: ichimoku.kijunSen.toFixed(2),
+      },
     });
   }
 
-  // ─── 2. BOLLINGER BANDS ─────────────────────────────────────────────────
+  // 2) RSI + MA + S/R L
+  const currentRsi7 = rsi7Series[last];
+  const currentEma21 = ema21[last];
+  if (Number.isFinite(currentRsi7) && Number.isFinite(currentEma21)) {
+    const nearSupport = isNearLevel(close, supportResistance.nearestSupport, 0.1);
+    const nearResistance = isNearLevel(close, supportResistance.nearestResistance, 0.1);
 
-  if (bollinger) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
-
-    if (bollinger.percentB < 0.05) {
-      direction = 'RISE';
-      confidence = 70;
-      details.push('At lower band (bounce)');
-    } else if (bollinger.percentB > 0.95) {
-      direction = 'FALL';
-      confidence = 70;
-      details.push('At upper band (pullback)');
-    } else if (bollinger.percentB < 0.2) {
-      direction = 'RISE';
-      confidence = 55;
-      details.push('Near lower band');
-    } else if (bollinger.percentB > 0.8) {
-      direction = 'FALL';
-      confidence = 55;
-      details.push('Near upper band');
-    } else {
-      details.push('Mid range');
-      confidence = 30;
-    }
-
-    details.push(`%B: ${(bollinger.percentB * 100).toFixed(1)}%`);
+    let direction: SignalDirection = 'NEUTRAL';
+    if (nearSupport && currentRsi7 < 25 && close > currentEma21) direction = 'RISE';
+    if (nearResistance && currentRsi7 > 75 && close < currentEma21) direction = 'FALL';
 
     indicators.push({
-      name: 'Bollinger Bands',
+      name: 'RSI + MA + S/R L',
       direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 1.0,
+      confidence: direction === 'NEUTRAL' ? 45 : 72,
+      detail: `RSI7 ${currentRsi7.toFixed(1)} · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
+      weight: 1,
     });
   }
 
-  // ─── 3. STOCHASTIC RSI ─────────────────────────────────────────────────
+  // 3) EMA Crossover & Stochastic
+  if (ema5.length > prev && ema13.length > prev && stochastic) {
+    const emaBullCross = ema5[prev] <= ema13[prev] && ema5[last] > ema13[last];
+    const emaBearCross = ema5[prev] >= ema13[prev] && ema5[last] < ema13[last];
+    const stochBullCross = stochastic.previousK <= stochastic.previousD && stochastic.k > stochastic.d;
+    const stochBearCross = stochastic.previousK >= stochastic.previousD && stochastic.k < stochastic.d;
 
-  if (stochRSI) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
-
-    if (stochRSI.oversold && stochRSI.k > stochRSI.d) {
-      direction = 'RISE';
-      confidence = 75;
-      details.push('Oversold + K > D');
-    } else if (stochRSI.overbought && stochRSI.k < stochRSI.d) {
-      direction = 'FALL';
-      confidence = 75;
-      details.push('Overbought + K < D');
-    } else if (stochRSI.oversold) {
-      direction = 'RISE';
-      confidence = 60;
-      details.push('Oversold zone');
-    } else if (stochRSI.overbought) {
-      direction = 'FALL';
-      confidence = 60;
-      details.push('Overbought zone');
-    } else if (stochRSI.k > stochRSI.d && stochRSI.k < 50) {
-      direction = 'RISE';
-      confidence = 50;
-      details.push('K > D below midline');
-    } else if (stochRSI.k < stochRSI.d && stochRSI.k > 50) {
-      direction = 'FALL';
-      confidence = 50;
-      details.push('K < D above midline');
-    } else {
-      details.push('Neutral zone');
-    }
-
-    details.push(`K: ${stochRSI.k.toFixed(1)} D: ${stochRSI.d.toFixed(1)}`);
+    let direction: SignalDirection = 'NEUTRAL';
+    if (emaBullCross && stochastic.k < 20 && stochBullCross) direction = 'RISE';
+    if (emaBearCross && stochastic.k > 80 && stochBearCross) direction = 'FALL';
 
     indicators.push({
-      name: 'Stochastic RSI',
+      name: 'EMA Crossover & Stochastic',
       direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 1.0,
+      confidence: direction === 'NEUTRAL' ? 45 : 74,
+      detail: `EMA5 ${ema5[last].toFixed(2)} / EMA13 ${ema13[last].toFixed(2)} · K ${stochastic.k.toFixed(1)} D ${stochastic.d.toFixed(1)}`,
+      weight: 1,
     });
   }
 
-  // ─── 4. RSI ─────────────────────────────────────────────────────────────
+  // 4) Trend Filter
+  if (macdTrend && ema50.length > prev && ema21.length > prev) {
+    const macdBullCross = macdTrend.previousMacd <= macdTrend.previousSignal && macdTrend.macd > macdTrend.signal;
+    const macdBearCross = macdTrend.previousMacd >= macdTrend.previousSignal && macdTrend.macd < macdTrend.signal;
+    const histTurnsPositive = macdTrend.previousHistogram <= 0 && macdTrend.histogram > 0;
+    const histTurnsNegative = macdTrend.previousHistogram >= 0 && macdTrend.histogram < 0;
 
-  if (rsi) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
+    let direction: SignalDirection = 'NEUTRAL';
+    if (close > ema50[last] && histTurnsPositive && macdBullCross) direction = 'RISE';
+    if (close < ema50[last] && histTurnsNegative && macdBearCross) direction = 'FALL';
 
-    if (rsi.value < 25) {
-      direction = 'RISE';
-      confidence = 75;
-      details.push('Strongly oversold');
-    } else if (rsi.value > 75) {
-      direction = 'FALL';
-      confidence = 75;
-      details.push('Strongly overbought');
-    } else if (rsi.oversold) {
-      direction = 'RISE';
-      confidence = 60;
-      details.push('Oversold');
-    } else if (rsi.overbought) {
-      direction = 'FALL';
-      confidence = 60;
-      details.push('Overbought');
-    } else if (rsi.value < 45) {
-      direction = 'RISE';
-      confidence = 45;
-      details.push('Below midline');
-    } else if (rsi.value > 55) {
-      direction = 'FALL';
-      confidence = 45;
-      details.push('Above midline');
-    } else {
-      details.push('Neutral');
-    }
+    const ema50Rising = ema50[last] > ema50[prev];
+    const ema21Rising = ema21[last] > ema21[prev];
+    const trendAgreeUp = ema50Rising && ema21Rising;
+    const trendAgreeDown = !ema50Rising && !ema21Rising;
 
-    details.push(`RSI: ${rsi.value.toFixed(1)}`);
+    const pullbackToSR = isNearLevel(close, supportResistance.nearestSupport, 0.1) || isNearLevel(close, supportResistance.nearestResistance, 0.1);
+
+    const oscillatorConfirmsRise = (Number.isFinite(currentRsi7) && currentRsi7 < 30) || (stochastic ? stochastic.k < 20 && stochastic.k > stochastic.d : false);
+    const oscillatorConfirmsFall = (Number.isFinite(currentRsi7) && currentRsi7 > 70) || (stochastic ? stochastic.k > 80 && stochastic.k < stochastic.d : false);
+
+    const isStrongSignal =
+      (direction === 'RISE' && trendAgreeUp && pullbackToSR && oscillatorConfirmsRise) ||
+      (direction === 'FALL' && trendAgreeDown && pullbackToSR && oscillatorConfirmsFall);
 
     indicators.push({
-      name: 'RSI (14)',
+      name: 'Trend Filter',
       direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 1.0,
+      confidence: direction === 'NEUTRAL' ? 45 : isStrongSignal ? 85 : 75,
+      detail: `EMA50 ${ema50[last].toFixed(2)} · MACD Hist ${macdTrend.histogram.toFixed(4)}${isStrongSignal ? ' · STRONG' : ''}`,
+      weight: 1,
+      isStrongSignal,
     });
   }
 
-  // ─── 5. MACD ────────────────────────────────────────────────────────────
+  // 5) Scalp Machine
+  if (ema9.length > prev && rsi3.length > prev) {
+    const prevCandle = candles[prev];
+    const currCandle = candles[last];
+    const rsiBullCross50 = rsi3[prev] < 50 && rsi3[last] >= 50;
+    const rsiBearCross50 = rsi3[prev] > 50 && rsi3[last] <= 50;
 
-  if (macd) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
+    const prevRed = prevCandle.close < prevCandle.open;
+    const prevGreen = prevCandle.close > prevCandle.open;
+    const currGreen = currCandle.close > currCandle.open;
+    const currRed = currCandle.close < currCandle.open;
 
-    if (macd.crossoverBullish) {
-      direction = 'RISE';
-      confidence = 80;
-      details.push('Bullish crossover!');
-    } else if (macd.crossoverBearish) {
-      direction = 'FALL';
-      confidence = 80;
-      details.push('Bearish crossover!');
-    } else if (macd.bullish && macd.histogram > 0) {
-      direction = 'RISE';
-      confidence = 60;
-      details.push('Bullish momentum');
-    } else if (macd.bearish && macd.histogram < 0) {
-      direction = 'FALL';
-      confidence = 60;
-      details.push('Bearish momentum');
-    } else {
-      details.push('Neutral');
-    }
-
-    details.push(`Hist: ${macd.histogram.toFixed(4)}`);
+    let direction: SignalDirection = 'NEUTRAL';
+    if (currCandle.close > ema9[last] && rsiBullCross50 && prevRed && currGreen) direction = 'RISE';
+    if (currCandle.close < ema9[last] && rsiBearCross50 && prevGreen && currRed) direction = 'FALL';
 
     indicators.push({
-      name: 'MACD',
+      name: 'Scalp Machine',
       direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 1.2,
+      confidence: direction === 'NEUTRAL' ? 45 : 76,
+      detail: `EMA9 ${ema9[last].toFixed(2)} · RSI3 ${rsi3[last].toFixed(1)}`,
+      weight: 1,
     });
   }
 
-  // ─── 6. MOVING AVERAGES (EMA 20/50) ────────────────────────────────────
+  // 6) The Candle Trap
+  if (ema21.length > last && rsi6.length > last) {
+    const current = candles[last];
+    const prevCandles = candles.slice(Math.max(0, last - 5), last);
+    const last20 = candles.slice(Math.max(0, last - 20), last);
 
-  if (ma) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
+    const lowerLows = countLowerLows(prevCandles, 5);
+    const higherHighs = countHigherHighs(prevCandles, 5);
 
-    if (ma.goldenCross) {
-      direction = 'RISE';
-      confidence = 80;
-      details.push('Golden Cross!');
-    } else if (ma.deathCross) {
-      direction = 'FALL';
-      confidence = 80;
-      details.push('Death Cross!');
-    } else if (ma.priceAboveEma20 && ma.priceAboveEma50 && ma.ema20AboveEma50) {
-      direction = 'RISE';
-      confidence = 70;
-      details.push('Full bullish alignment');
-    } else if (!ma.priceAboveEma20 && !ma.priceAboveEma50 && !ma.ema20AboveEma50) {
-      direction = 'FALL';
-      confidence = 70;
-      details.push('Full bearish alignment');
-    } else if (ma.priceAboveEma20 && ma.ema20AboveEma50) {
-      direction = 'RISE';
-      confidence = 55;
-      details.push('Above EMAs, bullish');
-    } else if (!ma.priceAboveEma20 && !ma.ema20AboveEma50) {
-      direction = 'FALL';
-      confidence = 55;
-      details.push('Below EMAs, bearish');
-    } else {
-      details.push('Mixed signals');
-    }
+    const lowestLowLast20 = last20.length ? Math.min(...last20.map(c => c.low)) : current.low;
+    const highestHighLast20 = last20.length ? Math.max(...last20.map(c => c.high)) : current.high;
+
+    const bullTrap = isBullishTrapCandle(current);
+    const bearTrap = isBearishTrapCandle(current);
+
+    const riseCond =
+      bullTrap &&
+      current.close <= ema21[last] * 1.001 &&
+      rsi6[last] >= 25 && rsi6[last] <= 40 &&
+      lowerLows >= 3 &&
+      current.low >= lowestLowLast20;
+
+    const fallCond =
+      bearTrap &&
+      current.close >= ema21[last] * 0.999 &&
+      rsi6[last] >= 60 && rsi6[last] <= 75 &&
+      higherHighs >= 3 &&
+      current.high <= highestHighLast20;
+
+    let direction: SignalDirection = 'NEUTRAL';
+    if (riseCond) direction = 'RISE';
+    if (fallCond) direction = 'FALL';
 
     indicators.push({
-      name: 'EMA 20/50',
+      name: 'The Candle Trap',
       direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 1.0,
+      confidence: direction === 'NEUTRAL' ? 45 : 78,
+      detail: `EMA21 ${ema21[last].toFixed(2)} · RSI6 ${rsi6[last].toFixed(1)} · Trap ${bullTrap || bearTrap ? 'yes' : 'no'}`,
+      weight: 1,
     });
   }
 
-  // ─── 7. ADX (Trend Strength) ───────────────────────────────────────────
+  const riseCount = indicators.filter(i => i.direction === 'RISE').length;
+  const fallCount = indicators.filter(i => i.direction === 'FALL').length;
+  const neutralCount = indicators.filter(i => i.direction === 'NEUTRAL').length;
 
-  if (adx) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 40;
-    const details: string[] = [];
+  let combinedLabel: SignalResult['combinedLabel'] = 'NEUTRAL';
+  if (riseCount >= 5) combinedLabel = 'STRONG RISE';
+  else if (riseCount === 4) combinedLabel = 'RISE';
+  else if (riseCount === 3 && fallCount <= 1) combinedLabel = 'WEAK RISE';
+  else if (fallCount >= 5) combinedLabel = 'STRONG FALL';
+  else if (fallCount === 4) combinedLabel = 'FALL';
+  else if (fallCount === 3 && riseCount <= 1) combinedLabel = 'WEAK FALL';
 
-    if (adx.strongTrend) {
-      if (adx.bullishDI) {
-        direction = 'RISE';
-        confidence = 65;
-        details.push('Strong bullish trend');
-      } else {
-        direction = 'FALL';
-        confidence = 65;
-        details.push('Strong bearish trend');
-      }
-      if (adx.adx > 40) {
-        confidence += 10;
-        details.push('Very strong');
-      }
-    } else {
-      details.push('Weak/No trend');
-      confidence = 25;
-    }
+  const direction: SignalDirection =
+    combinedLabel.includes('RISE') ? 'RISE' : combinedLabel.includes('FALL') ? 'FALL' : 'NEUTRAL';
 
-    details.push(`ADX: ${adx.adx.toFixed(1)}`);
+  const strength: SignalStrength =
+    combinedLabel.startsWith('STRONG') ? 'STRONG' :
+    combinedLabel.startsWith('WEAK') ? 'WEAK' :
+    combinedLabel === 'RISE' || combinedLabel === 'FALL' ? 'MODERATE' : 'NONE';
 
-    indicators.push({
-      name: 'ADX',
-      direction,
-      confidence: Math.min(confidence, 90),
-      detail: details.join(' · '),
-      weight: 0.8,
-    });
-  }
-
-  // ─── 8. ATR — Non-directional, modulates confidence ───────────────────
-
-  if (atr) {
-    const details: string[] = [];
-    if (atr.highVolatility) {
-      details.push('High volatility — signals stronger');
-    } else {
-      details.push('Normal volatility');
-    }
-    details.push(`ATR: ${atr.value.toFixed(4)}`);
-
-    indicators.push({
-      name: 'ATR (14)',
-      direction: 'NEUTRAL',
-      confidence: 50,
-      detail: details.join(' · '),
-      weight: 0.5,
-    });
-  }
-
-  // ─── 9. SUPPORT / RESISTANCE (2m structure context) ───────────────────
-
-  if (supportResistance) {
-    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
-    let confidence = 35;
-    const details: string[] = [];
-
-    if (supportResistance.bullishBounceZone && !supportResistance.bearishRejectionZone) {
-      direction = 'RISE';
-      confidence = 68;
-      details.push('Near support (2m bounce zone)');
-    } else if (supportResistance.bearishRejectionZone && !supportResistance.bullishBounceZone) {
-      direction = 'FALL';
-      confidence = 68;
-      details.push('Near resistance (2m rejection zone)');
-    } else {
-      details.push('Between key levels');
-    }
-
-    details.push(`S: ${supportResistance.support.toFixed(2)}`);
-    details.push(`R: ${supportResistance.resistance.toFixed(2)}`);
-
-    indicators.push({
-      name: 'Support/Resistance (2m)',
-      direction,
-      confidence: Math.min(confidence, 88),
-      detail: details.join(' · '),
-      weight: 1.1,
-    });
-  }
-
-  // ─── DECISION ENGINE ───────────────────────────────────────────────────
-
-  const directionalIndicators = indicators.filter(i => i.name !== 'ATR (14)');
-  const riseSignals = directionalIndicators.filter(i => i.direction === 'RISE');
-  const fallSignals = directionalIndicators.filter(i => i.direction === 'FALL');
-  const neutralSignals = directionalIndicators.filter(i => i.direction === 'NEUTRAL');
-
-  const riseCount = riseSignals.length;
-  const fallCount = fallSignals.length;
-  const neutralCount = neutralSignals.length;
-  const totalDirectional = directionalIndicators.length;
-
-  // Weighted confidence calculation
-  const riseWeightedConf = riseSignals.reduce((sum, s) => sum + s.confidence * s.weight, 0);
-  const fallWeightedConf = fallSignals.reduce((sum, s) => sum + s.confidence * s.weight, 0);
-  const riseWeightSum = riseSignals.reduce((sum, s) => sum + s.weight, 0);
-  const fallWeightSum = fallSignals.reduce((sum, s) => sum + s.weight, 0);
-
-  const riseAvgConf = riseWeightSum > 0 ? riseWeightedConf / riseWeightSum : 0;
-  const fallAvgConf = fallWeightSum > 0 ? fallWeightedConf / fallWeightSum : 0;
-
-  // Ichimoku gets extra consideration
-  const ichimokuSignal = indicators.find(i => i.name === 'Ichimoku Cloud');
-
-  // ATR volatility multiplier
-  const volatilityMult = atr?.highVolatility ? 1.1 : 1.0;
-
-  let direction: SignalDirection = 'WAIT';
-  let strength: SignalStrength = 'NONE';
-  let overallConfidence = 0;
-  let reason = '';
-
-  const STRONG_COUNT = 5;
-  const MODERATE_COUNT = 4;
-  const STRONG_CONF = 60;
-
-  if (totalDirectional === 0) {
-    direction = 'WAIT';
-    strength = 'NONE';
-    reason = 'No directional indicators available';
-  } else if (riseCount >= STRONG_COUNT && riseAvgConf >= STRONG_CONF) {
-    direction = 'RISE';
-    overallConfidence = Math.min(riseAvgConf * volatilityMult, 98);
-    if (ichimokuSignal?.direction === 'RISE' && riseCount >= 5) {
-      strength = 'STRONG';
-      reason = `${riseCount} indicators bullish with Ichimoku confirmation`;
-    } else if (riseCount >= MODERATE_COUNT) {
-      strength = 'MODERATE';
-      reason = `${riseCount} indicators bullish`;
-    } else {
-      strength = 'WEAK';
-      reason = `Bullish but insufficient consensus`;
-    }
-  } else if (fallCount >= STRONG_COUNT && fallAvgConf >= STRONG_CONF) {
-    direction = 'FALL';
-    overallConfidence = Math.min(fallAvgConf * volatilityMult, 98);
-    if (ichimokuSignal?.direction === 'FALL' && fallCount >= 5) {
-      strength = 'STRONG';
-      reason = `${fallCount} indicators bearish with Ichimoku confirmation`;
-    } else if (fallCount >= MODERATE_COUNT) {
-      strength = 'MODERATE';
-      reason = `${fallCount} indicators bearish`;
-    } else {
-      strength = 'WEAK';
-      reason = `Bearish but insufficient consensus`;
-    }
-  } else if (riseCount >= MODERATE_COUNT && riseCount > fallCount + 1) {
-    direction = 'RISE';
-    overallConfidence = Math.min(riseAvgConf * volatilityMult * 0.85, 85);
-    strength = ichimokuSignal?.direction === 'RISE' ? 'MODERATE' : 'WEAK';
-    reason = `${riseCount} indicators bullish (moderate)`;
-  } else if (fallCount >= MODERATE_COUNT && fallCount > riseCount + 1) {
-    direction = 'FALL';
-    overallConfidence = Math.min(fallAvgConf * volatilityMult * 0.85, 85);
-    strength = ichimokuSignal?.direction === 'FALL' ? 'MODERATE' : 'WEAK';
-    reason = `${fallCount} indicators bearish (moderate)`;
-  } else if (neutralCount >= totalDirectional * 0.5) {
-    direction = 'SIDEWAYS';
-    strength = 'NONE';
-    overallConfidence = 0;
-    reason = `${neutralCount}/${totalDirectional} indicators neutral — ranging market`;
-  } else {
-    direction = 'WAIT';
-    strength = 'NONE';
-    overallConfidence = 0;
-    reason = `No clear consensus (Rise: ${riseCount}, Fall: ${fallCount}, Neutral: ${neutralCount})`;
-  }
-
-  // Only show RISE/FALL if strength is STRONG or MODERATE
-  if ((direction === 'RISE' || direction === 'FALL') && strength === 'WEAK') {
-    reason = `Weak ${direction.toLowerCase()} signal suppressed — ${reason}`;
-    direction = 'WAIT';
-    strength = 'NONE';
-    overallConfidence = 0;
-  }
+  const agreeCount = Math.max(riseCount, fallCount);
+  const confidence = Math.round((agreeCount / Math.max(indicators.length, 1)) * 100);
 
   return {
     direction,
     strength,
-    confidence: Math.round(overallConfidence),
+    confidence,
+    confidenceScore: `${agreeCount}/${indicators.length}`,
+    combinedLabel,
     indicators,
     riseCount,
     fallCount,
     neutralCount,
     timestamp: Date.now(),
     ichimoku,
-    bollinger,
-    rsi,
-    stochRSI,
-    atr,
-    macd,
-    ma,
-    adx,
     supportResistance,
-    reason,
+    stochastic,
+    macdTrend,
+    ema21: Number.isFinite(ema21[last]) ? ema21[last] : null,
+    ema50: Number.isFinite(ema50[last]) ? ema50[last] : null,
+    rsi7: Number.isFinite(currentRsi7) ? currentRsi7 : null,
+    reason: `${riseCount} rise / ${fallCount} fall / ${neutralCount} neutral`,
   };
 }
