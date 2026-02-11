@@ -166,6 +166,43 @@ function didHistogramCrossZeroWithinTicks(candles: Candle[], ticks: number, dire
   return false;
 }
 
+function getStochasticCrossMeta(candles: Candle[], maxBarsSinceCross: number): {
+  barsSinceBullCross: number | null;
+  barsSinceBearCross: number | null;
+  bullCrossK: number | null;
+  bearCrossK: number | null;
+} {
+  let barsSinceBullCross: number | null = null;
+  let barsSinceBearCross: number | null = null;
+  let bullCrossK: number | null = null;
+  let bearCrossK: number | null = null;
+
+  for (let barsAgo = 0; barsAgo <= maxBarsSinceCross; barsAgo++) {
+    const candleIndex = candles.length - 1 - barsAgo;
+    if (candleIndex < 1) break;
+
+    const stochAtCandle = calcStochastic(candles.slice(0, candleIndex + 1), 5, 3, 3);
+    if (!stochAtCandle) continue;
+
+    const bullCross = stochAtCandle.previousK <= stochAtCandle.previousD && stochAtCandle.k > stochAtCandle.d;
+    const bearCross = stochAtCandle.previousK >= stochAtCandle.previousD && stochAtCandle.k < stochAtCandle.d;
+
+    if (barsSinceBullCross === null && bullCross) {
+      barsSinceBullCross = barsAgo;
+      bullCrossK = stochAtCandle.k;
+    }
+
+    if (barsSinceBearCross === null && bearCross) {
+      barsSinceBearCross = barsAgo;
+      bearCrossK = stochAtCandle.k;
+    }
+
+    if (barsSinceBullCross !== null && barsSinceBearCross !== null) break;
+  }
+
+  return { barsSinceBullCross, barsSinceBearCross, bullCrossK, bearCrossK };
+}
+
 export function generateSignal(candles: Candle[]): SignalResult {
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
@@ -294,20 +331,36 @@ export function generateSignal(candles: Candle[]): SignalResult {
 
   // 4) EMA Crossover & Stochastic
   if (ema5.length > prev && ema13.length > prev && stochastic) {
+    const MAX_BARS_SINCE_STOCH_CROSS = 1;
     const emaBullCross = ema5[prev] <= ema13[prev] && ema5[last] > ema13[last];
     const emaBearCross = ema5[prev] >= ema13[prev] && ema5[last] < ema13[last];
-    const stochBullCross = stochastic.previousK <= stochastic.previousD && stochastic.k > stochastic.d;
-    const stochBearCross = stochastic.previousK >= stochastic.previousD && stochastic.k < stochastic.d;
+    const {
+      barsSinceBullCross,
+      barsSinceBearCross,
+      bullCrossK,
+      bearCrossK,
+    } = getStochasticCrossMeta(candles, MAX_BARS_SINCE_STOCH_CROSS);
+
+    const stochBullCrossRecent = barsSinceBullCross !== null && barsSinceBullCross <= MAX_BARS_SINCE_STOCH_CROSS;
+    const stochBearCrossRecent = barsSinceBearCross !== null && barsSinceBearCross <= MAX_BARS_SINCE_STOCH_CROSS;
+
+    const kRisingFromBelow20 = stochastic.previousK < 20 && stochastic.k > stochastic.previousK;
+    const kFallingFromAbove80 = stochastic.previousK > 80 && stochastic.k < stochastic.previousK;
+    const kValidForRise = (bullCrossK !== null && bullCrossK < 25) || kRisingFromBelow20;
+    const kValidForFall = (bearCrossK !== null && bearCrossK > 75) || kFallingFromAbove80;
 
     let direction: SignalDirection = 'NEUTRAL';
-    if (emaBullCross && stochastic.k < 20 && stochBullCross) direction = 'RISE';
-    if (emaBearCross && stochastic.k > 80 && stochBearCross) direction = 'FALL';
+    if (emaBullCross && stochBullCrossRecent && kValidForRise) direction = 'RISE';
+    if (emaBearCross && stochBearCrossRecent && kValidForFall) direction = 'FALL';
 
     indicators.push({
       name: 'EMA Crossover & Stochastic',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 74,
-      detail: `EMA5 ${ema5[last].toFixed(2)} / EMA13 ${ema13[last].toFixed(2)} · K ${stochastic.k.toFixed(1)} D ${stochastic.d.toFixed(1)}`,
+      detail:
+        `EMA5 ${ema5[last].toFixed(2)} / EMA13 ${ema13[last].toFixed(2)} · ` +
+        `K ${stochastic.k.toFixed(1)} D ${stochastic.d.toFixed(1)} · ` +
+        `bars since K/D cross ↑ ${barsSinceBullCross ?? '—'} ↓ ${barsSinceBearCross ?? '—'} (max ${MAX_BARS_SINCE_STOCH_CROSS})`,
       weight: 1,
     });
   }

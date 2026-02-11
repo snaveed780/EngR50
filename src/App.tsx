@@ -118,11 +118,12 @@ export function App() {
   }, []);
 
   const allCandles = useMemo(() => (currentCandle ? [...candles, currentCandle] : candles), [candles, currentCandle]);
+  const closedCandles = useMemo(() => candles, [candles]);
 
   const signal = useMemo(() => {
-    if (allCandles.length < 100) return null;
-    return generateSignal(allCandles);
-  }, [allCandles]);
+    if (closedCandles.length < 100) return null;
+    return generateSignal(closedCandles);
+  }, [closedCandles]);
 
   const stableSignal = useMemo(() => {
     if (!signal) return prevSignalRef.current;
