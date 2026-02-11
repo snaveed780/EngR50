@@ -91,6 +91,63 @@ function hasStrongBearishBody(candle: Candle): boolean {
   return body > 0 && body / range >= 0.6;
 }
 
+function getBodySize(candle: Candle): number {
+  return Math.abs(candle.close - candle.open);
+}
+
+function calcAtrAt(candles: Candle[], index: number, period = 14): number {
+  if (index <= 0) return Math.max((candles[index]?.high ?? 0) - (candles[index]?.low ?? 0), 1e-9);
+  const start = Math.max(1, index - period + 1);
+  let trSum = 0;
+  let count = 0;
+
+  for (let i = start; i <= index; i++) {
+    const curr = candles[i];
+    const prev = candles[i - 1];
+    const tr = Math.max(
+      curr.high - curr.low,
+      Math.abs(curr.high - prev.close),
+      Math.abs(curr.low - prev.close),
+    );
+    trSum += tr;
+    count++;
+  }
+
+  return Math.max(count > 0 ? trSum / count : candles[index].high - candles[index].low, 1e-9);
+}
+
+function setup4TriggerDirectionAt(candles: Candle[], ema9: number[], rsi3: number[], index: number): SignalDirection {
+  if (index < 1 || ema9.length <= index || rsi3.length <= index) return 'NEUTRAL';
+
+  const prevCandle = candles[index - 1];
+  const currCandle = candles[index];
+  const rsiBullCross50 = rsi3[index - 1] < 50 && rsi3[index] >= 50;
+  const rsiBearCross50 = rsi3[index - 1] > 50 && rsi3[index] <= 50;
+
+  const prevRed = prevCandle.close < prevCandle.open;
+  const prevGreen = prevCandle.close > prevCandle.open;
+  const currGreen = currCandle.close > currCandle.open;
+  const currRed = currCandle.close < currCandle.open;
+
+  if (currCandle.close > ema9[index] && rsiBullCross50 && prevRed && currGreen) return 'RISE';
+  if (currCandle.close < ema9[index] && rsiBearCross50 && prevGreen && currRed) return 'FALL';
+  return 'NEUTRAL';
+}
+
+function isFullReversalCandle(signalCandle: Candle, nextCandle: Candle, direction: SignalDirection): boolean {
+  if (direction === 'RISE') {
+    const nextIsBearish = nextCandle.close < nextCandle.open;
+    return nextIsBearish && nextCandle.high >= signalCandle.high && nextCandle.low <= signalCandle.low;
+  }
+
+  if (direction === 'FALL') {
+    const nextIsBullish = nextCandle.close > nextCandle.open;
+    return nextIsBullish && nextCandle.high >= signalCandle.high && nextCandle.low <= signalCandle.low;
+  }
+
+  return false;
+}
+
 function didHistogramCrossZeroWithinTicks(candles: Candle[], ticks: number, direction: 'up' | 'down'): boolean {
   const start = Math.max(2, candles.length - ticks - 1);
 
@@ -321,10 +378,46 @@ export function generateSignal(candles: Candle[]): SignalResult {
     });
   }
 
-  // 5) Scalp Machine
+  // 5) Setup 4 — Scalp Machine
   if (ema9.length > prev && rsi3.length > prev) {
     const prevCandle = candles[prev];
     const currCandle = candles[last];
+    const ema9Slope = ema9[last] - ema9[prev];
+    const EMA9_SLOPE_THRESHOLD = 0.01;
+    const slopeSupportsRise = ema9Slope > EMA9_SLOPE_THRESHOLD;
+    const slopeSupportsFall = ema9Slope < -EMA9_SLOPE_THRESHOLD;
+
+    const atr14 = calcAtrAt(candles, last, 14);
+    const currBody = getBodySize(currCandle);
+    const minBodyThreshold = atr14 * 0.35;
+    const bodyIsLargeEnough = currBody >= minBodyThreshold;
+
+    const recentBodies = candles.slice(Math.max(0, last - 2), last + 1).map(getBodySize);
+    const longBodyCount = recentBodies.filter(body => body >= minBodyThreshold).length;
+    const inHighLiquiditySession = longBodyCount >= 2;
+
+    const priorSameDirectionSignalWithinCooldown = (direction: SignalDirection): boolean => {
+      const start = Math.max(1, last - 5);
+      for (let i = start; i < last; i++) {
+        if (setup4TriggerDirectionAt(candles, ema9, rsi3, i) === direction) return true;
+      }
+      return false;
+    };
+
+    const previousSignalDirection = setup4TriggerDirectionAt(candles, ema9, rsi3, prev);
+    const hardInvalidation = previousSignalDirection !== 'NEUTRAL' &&
+      isFullReversalCandle(prevCandle, currCandle, previousSignalDirection);
+
+    const baseRisePrefilters = inHighLiquiditySession && slopeSupportsRise && bodyIsLargeEnough && !hardInvalidation;
+    const baseFallPrefilters = inHighLiquiditySession && slopeSupportsFall && bodyIsLargeEnough && !hardInvalidation;
+
+    const riseCooldownClear = !priorSameDirectionSignalWithinCooldown('RISE');
+    const fallCooldownClear = !priorSameDirectionSignalWithinCooldown('FALL');
+
+    const risePrefiltersOk = baseRisePrefilters && riseCooldownClear;
+    const fallPrefiltersOk = baseFallPrefilters && fallCooldownClear;
+
+    // Trigger checks run only after all mandatory pre-Signal filters pass.
     const rsiBullCross50 = rsi3[prev] < 50 && rsi3[last] >= 50;
     const rsiBearCross50 = rsi3[prev] > 50 && rsi3[last] <= 50;
 
@@ -334,14 +427,21 @@ export function generateSignal(candles: Candle[]): SignalResult {
     const currRed = currCandle.close < currCandle.open;
 
     let direction: SignalDirection = 'NEUTRAL';
-    if (currCandle.close > ema9[last] && rsiBullCross50 && prevRed && currGreen) direction = 'RISE';
-    if (currCandle.close < ema9[last] && rsiBearCross50 && prevGreen && currRed) direction = 'FALL';
+    if (risePrefiltersOk && currCandle.close > ema9[last] && rsiBullCross50 && prevRed && currGreen) direction = 'RISE';
+    if (fallPrefiltersOk && currCandle.close < ema9[last] && rsiBearCross50 && prevGreen && currRed) direction = 'FALL';
 
     indicators.push({
-      name: 'Scalp Machine',
+      name: 'Setup 4: Scalp Machine',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 76,
-      detail: `EMA9 ${ema9[last].toFixed(2)} · RSI3 ${rsi3[last].toFixed(1)}`,
+      detail:
+        `Pre-filters: liquidity ${inHighLiquiditySession ? '✓' : '✗'} (long bodies ${longBodyCount}/3) · ` +
+        `EMA9 slope ${ema9Slope.toFixed(4)} ${slopeSupportsRise || slopeSupportsFall ? '✓' : 'flat ✗'} · ` +
+        `min body ${currBody.toFixed(4)}≥${minBodyThreshold.toFixed(4)} ${bodyIsLargeEnough ? '✓' : '✗'} · ` +
+        `cooldown R:${riseCooldownClear ? '✓' : '✗'} F:${fallCooldownClear ? '✓' : '✗'} · ` +
+        `hard invalidation ${hardInvalidation ? 'TRIGGERED' : 'clear'} · ` +
+        `Trigger: RSI3 ${rsi3[last].toFixed(1)} (${rsiBullCross50 ? '↑50' : rsiBearCross50 ? '↓50' : '—'}) · ` +
+        `Color ${prevRed && currGreen ? 'red→green' : prevGreen && currRed ? 'green→red' : 'none'}`,
       weight: 1,
     });
   }
