@@ -103,7 +103,7 @@ function HistoryEntry({ signal }: { signal: SignalResult }) {
 }
 
 export function App() {
-  const { candles, currentTick, isConnected, error, currentCandle, tickCount, reconnectCount } = useDerivTicks();
+  const { candles, currentTick, isConnected, error, tickCount, reconnectCount } = useDerivTicks();
   const [signalHistory, setSignalHistory] = useState<SignalResult[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const prevSignalRef = useRef<SignalResult | null>(null);
@@ -113,12 +113,13 @@ export function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const allCandles = useMemo(() => (currentCandle ? [...candles, currentCandle] : candles), [candles, currentCandle]);
+  // Signals are evaluated on closed candles only.
+  const closedCandles = candles;
 
   const signal = useMemo(() => {
-    if (allCandles.length < 100) return null;
-    return generateSignal(allCandles);
-  }, [allCandles]);
+    if (closedCandles.length < 100) return null;
+    return generateSignal(closedCandles);
+  }, [closedCandles]);
 
   const stableSignal = useMemo(() => {
     if (!signal) return prevSignalRef.current;
@@ -133,14 +134,14 @@ export function App() {
 
   const priceStr = currentTick?.price?.toFixed(4) ?? '—';
 
-  if (allCandles.length < 100) {
+  if (closedCandles.length < 100) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="text-center">
           <h2 className="text-xl font-bold text-slate-300 mb-2">Initializing Signal Engine</h2>
           <p className="text-sm text-slate-500 mb-4">Loading 100 candles for indicator warm-up...</p>
           <div className="space-y-1 text-xs text-slate-600">
-            <div>Candles: <span className="text-blue-400 font-mono">{allCandles.length}/100</span></div>
+            <div>Candles: <span className="text-blue-400 font-mono">{closedCandles.length}/100</span></div>
             <div>Ticks: <span className="text-blue-400 font-mono">{tickCount}</span></div>
           </div>
         </div>
@@ -175,7 +176,7 @@ export function App() {
             <div className="lg:col-span-8 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Signal Sources (6)</h2>
-                <div className="text-[10px] text-slate-600">2m timeframe • {allCandles.length} candles</div>
+                <div className="text-[10px] text-slate-600">2m timeframe • {closedCandles.length} closed candles</div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {stableSignal.indicators.map((ind) => (
