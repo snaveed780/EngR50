@@ -397,6 +397,51 @@ export interface ADXResult {
   bullishDI: boolean;
 }
 
+// ─── Support & Resistance (2m swing levels) ────────────────────────────────
+
+export interface SupportResistanceResult {
+  support: number;
+  resistance: number;
+  nearestDistanceToSupportPct: number;
+  nearestDistanceToResistancePct: number;
+  bullishBounceZone: boolean;
+  bearishRejectionZone: boolean;
+  rangeWidthPct: number;
+}
+
+export function calcSupportResistance(candles: Candle[], lookback = 30): SupportResistanceResult | null {
+  if (candles.length < Math.max(lookback, 20)) return null;
+
+  const slice = candles.slice(-lookback);
+  const highs = slice.map(c => c.high);
+  const lows = slice.map(c => c.low);
+  const close = candles[candles.length - 1].close;
+
+  const support = Math.min(...lows);
+  const resistance = Math.max(...highs);
+  const range = resistance - support;
+
+  if (range <= 0 || close <= 0) return null;
+
+  const distanceToSupport = Math.abs(close - support);
+  const distanceToResistance = Math.abs(resistance - close);
+  const nearestDistanceToSupportPct = (distanceToSupport / close) * 100;
+  const nearestDistanceToResistancePct = (distanceToResistance / close) * 100;
+
+  // 12% of channel used as "near level" zone, capped by relative price distance
+  const nearLevelThreshold = range * 0.12;
+
+  return {
+    support,
+    resistance,
+    nearestDistanceToSupportPct,
+    nearestDistanceToResistancePct,
+    bullishBounceZone: distanceToSupport <= nearLevelThreshold,
+    bearishRejectionZone: distanceToResistance <= nearLevelThreshold,
+    rangeWidthPct: (range / close) * 100,
+  };
+}
+
 export function calcADX(candles: Candle[], period = 14): ADXResult | null {
   if (candles.length < period * 3) return null;
 

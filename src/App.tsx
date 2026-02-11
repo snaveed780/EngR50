@@ -138,7 +138,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
         {/* Signal Direction */}
         <div className="text-center mb-3">
           <div className="text-[10px] text-slate-500 uppercase tracking-[0.4em] mb-2 font-semibold">
-            R_50 Signal • 5 Min Expiry
+            R_50 Signal • 2m Structure + 5m Expiry
           </div>
           <div
             className={`text-5xl sm:text-6xl md:text-7xl font-black tracking-tight leading-none ${
@@ -161,23 +161,16 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
                 FALL
               </span>
             )}
-            {signal.direction === 'WAIT' && (
+            {signal.direction === 'NEUTRAL' && (
               <span className="inline-flex items-center gap-3">
                 <svg className="w-10 h-10 sm:w-12 sm:h-12 animate-spin" style={{ animationDuration: '3s' }} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 6v6l4 2" />
                 </svg>
-                WAIT
+                NEUTRAL
               </span>
             )}
-            {signal.direction === 'SIDEWAYS' && (
-              <span className="inline-flex items-center gap-3">
-                <svg className="w-10 h-10 sm:w-12 sm:h-12" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path d="M5 12h14M5 12l3-3M5 12l3 3M19 12l-3-3M19 12l-3 3" />
-                </svg>
-                SIDEWAYS
-              </span>
-            )}
+
           </div>
         </div>
 
@@ -188,9 +181,11 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Strength</div>
               <div
                 className={`text-base sm:text-lg font-bold ${
-                  signal.strength === 'STRONG'
-                    ? isRise ? 'text-emerald-300' : 'text-red-300'
-                    : 'text-amber-400'
+                  signal.strength.includes('STRONG')
+                    ? isRise ? 'text-emerald-300' : isFall ? 'text-red-300' : 'text-slate-300'
+                    : signal.strength.includes('WEAK')
+                    ? 'text-amber-400'
+                    : isRise ? 'text-emerald-300' : isFall ? 'text-red-300' : 'text-slate-300'
                 }`}
               >
                 {signal.strength}
@@ -206,7 +201,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
             <div className="w-px h-8 bg-slate-700" />
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Expiry</div>
-              <div className="text-base sm:text-lg font-bold text-blue-300">5 min</div>
+              <div className="text-base sm:text-lg font-bold text-blue-300">5 min (2m candles)</div>
             </div>
           </div>
         )}
@@ -214,9 +209,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
         {!isActive && (
           <div className="text-center mb-2">
             <p className="text-sm text-slate-500 mt-1">
-              {signal.direction === 'SIDEWAYS'
-                ? 'Market is ranging. No clear directional bias.'
-                : 'Waiting for indicator alignment...'}
+              Market is neutral. No clear directional bias.
             </p>
             <p className="text-[10px] text-slate-600 mt-2 italic">{signal.reason}</p>
           </div>
@@ -340,9 +333,10 @@ function ConsensusMeter({ signal }: { signal: SignalResult }) {
       <div className="mt-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/30">
         <p className="text-[10px] text-slate-500 leading-relaxed">
           <strong className="text-slate-400">Rules:</strong>{' '}
-          <strong className="text-emerald-400">STRONG</strong> = ≥5 agree + Ichimoku ✓ + avg conf ≥60%.{' '}
-          <strong className="text-amber-400">MODERATE</strong> = ≥4 agree.{' '}
-          Otherwise → <strong className="text-slate-300">WAIT / SIDEWAYS</strong>.
+          <strong className="text-emerald-400">STRONG RISE/FALL</strong> = 5-6 setups agree.{' '}
+          <strong className="text-blue-300">RISE/FALL</strong> = 4 setups agree.{' '}
+          <strong className="text-amber-400">WEAK RISE/FALL</strong> = 3 setups agree vs opposite.{' '}
+          Tie = <strong className="text-slate-300">NEUTRAL</strong>.
         </p>
       </div>
     </div>
