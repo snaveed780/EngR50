@@ -104,6 +104,14 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
   const isRise = signal.direction === 'RISE';
   const isFall = signal.direction === 'FALL';
   const isActive = isRise || isFall;
+  const agreement = Math.max(signal.riseCount, signal.fallCount);
+  const strengthTier = signal.direction === 'NEUTRAL'
+    ? 'NEUTRAL'
+    : agreement >= 5
+    ? 'STRONG'
+    : agreement >= 4
+    ? 'MODERATE'
+    : 'WEAK';
 
   const bgGradient = isRise
     ? 'from-emerald-900/60 via-emerald-800/20 to-transparent'
@@ -123,12 +131,18 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
     ? 'shadow-[0_0_40px_rgba(239,68,68,0.15)]'
     : '';
 
+  const directionColor = isRise
+    ? strengthTier === 'STRONG' ? 'text-emerald-300' : 'text-emerald-400'
+    : isFall
+    ? strengthTier === 'STRONG' ? 'text-red-300' : 'text-red-400'
+    : 'text-slate-400';
+
   return (
     <div
       className={`relative overflow-hidden rounded-2xl border-2 p-4 md:p-6 bg-gradient-to-br ${bgGradient} ${borderColor} ${glowColor} transition-all duration-700`}
     >
       {/* Animated background pulse */}
-      {isActive && (
+      {(
         <div className="absolute inset-0 animate-pulse opacity-[0.07]">
           <div className={`w-full h-full ${isRise ? 'bg-emerald-500' : 'bg-red-500'}`} />
         </div>
@@ -138,11 +152,11 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
         {/* Signal Direction */}
         <div className="text-center mb-3">
           <div className="text-[10px] text-slate-500 uppercase tracking-[0.4em] mb-2 font-semibold">
-            R_50 Signal • 5 Min Expiry
+            R_50 Signal • 2m Structure + 5m Expiry
           </div>
           <div
             className={`text-5xl sm:text-6xl md:text-7xl font-black tracking-tight leading-none ${
-              isRise ? 'text-emerald-400' : isFall ? 'text-red-400' : 'text-slate-500'
+              directionColor
             }`}
           >
             {isRise && (
@@ -161,52 +175,51 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
                 FALL
               </span>
             )}
-            {signal.direction === 'WAIT' && (
+            {signal.direction === 'NEUTRAL' && (
               <span className="inline-flex items-center gap-3">
                 <svg className="w-10 h-10 sm:w-12 sm:h-12 animate-spin" style={{ animationDuration: '3s' }} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 6v6l4 2" />
                 </svg>
-                WAIT
+                NEUTRAL
               </span>
             )}
-            {signal.direction === 'SIDEWAYS' && (
-              <span className="inline-flex items-center gap-3">
-                <svg className="w-10 h-10 sm:w-12 sm:h-12" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path d="M5 12h14M5 12l3-3M5 12l3 3M19 12l-3-3M19 12l-3 3" />
-                </svg>
-                SIDEWAYS
-              </span>
-            )}
+
           </div>
         </div>
 
         {/* Strength & Confidence */}
-        {isActive && (
+        {(
           <div className="flex items-center justify-center gap-4 sm:gap-6 mb-3">
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Strength</div>
               <div
                 className={`text-base sm:text-lg font-bold ${
-                  signal.strength === 'STRONG'
+                  strengthTier === 'STRONG'
+                    ? isRise ? 'text-emerald-300' : isFall ? 'text-red-300' : 'text-slate-300'
+                    : strengthTier === 'WEAK'
+                    ? 'text-amber-400'
+                    : strengthTier === 'MODERATE'
                     ? isRise ? 'text-emerald-300' : 'text-red-300'
-                    : 'text-amber-400'
+                    : 'text-slate-300'
                 }`}
               >
-                {signal.strength}
+                {strengthTier}
               </div>
             </div>
             <div className="w-px h-8 bg-slate-700" />
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Confidence</div>
-              <div className={`text-base sm:text-lg font-bold ${isRise ? 'text-emerald-300' : 'text-red-300'}`}>
-                {signal.confidence}%
+              <div className={`text-base sm:text-lg font-bold ${
+                isRise ? 'text-emerald-300' : isFall ? 'text-red-300' : 'text-slate-300'
+              }`}>
+                {signal.confidence}/6
               </div>
             </div>
             <div className="w-px h-8 bg-slate-700" />
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Expiry</div>
-              <div className="text-base sm:text-lg font-bold text-blue-300">5 min</div>
+              <div className="text-base sm:text-lg font-bold text-blue-300">5 min (2m candles)</div>
             </div>
           </div>
         )}
@@ -214,9 +227,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
         {!isActive && (
           <div className="text-center mb-2">
             <p className="text-sm text-slate-500 mt-1">
-              {signal.direction === 'SIDEWAYS'
-                ? 'Market is ranging. No clear directional bias.'
-                : 'Waiting for indicator alignment...'}
+              Market is neutral. No clear directional bias.
             </p>
             <p className="text-[10px] text-slate-600 mt-2 italic">{signal.reason}</p>
           </div>
@@ -283,7 +294,7 @@ function HistoryEntry({ signal, index }: { signal: SignalResult; index: number }
       </span>
       {(isRise || isFall) ? (
         <span className={`text-[10px] font-mono font-semibold w-10 text-right ${isRise ? 'text-emerald-400' : 'text-red-400'}`}>
-          {signal.confidence}%
+          {signal.confidence}/6
         </span>
       ) : (
         <span className="text-[10px] text-slate-600 w-10 text-right">—</span>
@@ -340,9 +351,10 @@ function ConsensusMeter({ signal }: { signal: SignalResult }) {
       <div className="mt-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/30">
         <p className="text-[10px] text-slate-500 leading-relaxed">
           <strong className="text-slate-400">Rules:</strong>{' '}
-          <strong className="text-emerald-400">STRONG</strong> = ≥5 agree + Ichimoku ✓ + avg conf ≥60%.{' '}
-          <strong className="text-amber-400">MODERATE</strong> = ≥4 agree.{' '}
-          Otherwise → <strong className="text-slate-300">WAIT / SIDEWAYS</strong>.
+          <strong className="text-emerald-400">STRONG RISE/FALL</strong> = 5-6 setups agree.{' '}
+          <strong className="text-blue-300">RISE/FALL</strong> = 4 setups agree.{' '}
+          <strong className="text-amber-400">WEAK RISE/FALL</strong> = 3 setups agree vs opposite.{' '}
+          Tie = <strong className="text-slate-300">NEUTRAL</strong>.
         </p>
       </div>
     </div>
@@ -352,160 +364,34 @@ function ConsensusMeter({ signal }: { signal: SignalResult }) {
 // ─── Indicator Details Component ────────────────────────────────────────────
 
 function IndicatorDetails({ signal }: { signal: SignalResult }) {
+  const tier = signal.direction === 'NEUTRAL'
+    ? 'NEUTRAL'
+    : signal.confidence >= 5
+    ? 'STRONG'
+    : signal.confidence >= 4
+    ? 'MODERATE'
+    : 'WEAK';
+
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 md:p-5">
       <div className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-semibold mb-3">
-        Key Metrics & Details
+        Combined Signal Summary
       </div>
-
-      {/* Quick Gauges */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        {signal.rsi && (
-          <MiniGauge
-            label="RSI"
-            value={signal.rsi.value}
-            min={0}
-            max={100}
-            zones={[
-              { from: 0, to: 30, color: 'bg-emerald-400' },
-              { from: 30, to: 70, color: 'bg-slate-400' },
-              { from: 70, to: 100, color: 'bg-red-400' },
-            ]}
-          />
-        )}
-        {signal.stochRSI && (
-          <MiniGauge
-            label="StochRSI K"
-            value={signal.stochRSI.k}
-            min={0}
-            max={100}
-            zones={[
-              { from: 0, to: 20, color: 'bg-emerald-400' },
-              { from: 20, to: 80, color: 'bg-blue-400' },
-              { from: 80, to: 100, color: 'bg-red-400' },
-            ]}
-          />
-        )}
-        {signal.adx && (
-          <MiniGauge
-            label="ADX"
-            value={signal.adx.adx}
-            min={0}
-            max={60}
-            zones={[
-              { from: 0, to: 20, color: 'bg-slate-500' },
-              { from: 20, to: 40, color: 'bg-amber-400' },
-              { from: 40, to: 60, color: 'bg-orange-500' },
-            ]}
-          />
-        )}
-        {signal.atr && (
-          <MiniGauge
-            label="ATR"
-            value={signal.atr.value}
-            min={0}
-            max={signal.atr.avgATR * 3}
-            zones={[
-              { from: 0, to: signal.atr.avgATR, color: 'bg-blue-400' },
-              { from: signal.atr.avgATR, to: signal.atr.avgATR * 2, color: 'bg-amber-400' },
-              { from: signal.atr.avgATR * 2, to: signal.atr.avgATR * 3, color: 'bg-red-400' },
-            ]}
-          />
-        )}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-lg border border-slate-700/40 bg-slate-800/40 p-3 text-center">
+          <div className="text-[9px] uppercase text-slate-500">Direction</div>
+          <div className="text-sm font-bold text-slate-200 mt-1">{signal.direction}</div>
+        </div>
+        <div className="rounded-lg border border-slate-700/40 bg-slate-800/40 p-3 text-center">
+          <div className="text-[9px] uppercase text-slate-500">Strength</div>
+          <div className="text-sm font-bold text-slate-200 mt-1">{tier}</div>
+        </div>
+        <div className="rounded-lg border border-slate-700/40 bg-slate-800/40 p-3 text-center">
+          <div className="text-[9px] uppercase text-slate-500">Confidence</div>
+          <div className="text-sm font-bold text-slate-200 mt-1">{signal.confidence}/6</div>
+        </div>
       </div>
-
-      {/* MACD Details */}
-      {signal.macd && (
-        <div className="py-3 border-t border-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-500 uppercase font-semibold">MACD Histogram</span>
-            <span className={`text-xs font-mono font-bold ${
-              signal.macd.histogram > 0 ? 'text-emerald-400' : 'text-red-400'
-            }`}>
-              {signal.macd.histogram > 0 ? '+' : ''}{signal.macd.histogram.toFixed(4)}
-            </span>
-          </div>
-          <div className="mt-1 flex items-center gap-3">
-            <span className="text-[10px] text-slate-600">MACD: {signal.macd.macd.toFixed(4)}</span>
-            <span className="text-[10px] text-slate-600">Signal: {signal.macd.signal.toFixed(4)}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Ichimoku Details */}
-      {signal.ichimoku && (
-        <div className="py-3 border-t border-slate-800">
-          <div className="text-[10px] text-slate-500 uppercase font-semibold mb-2">Ichimoku Cloud</div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <div className="flex justify-between">
-              <span className="text-[10px] text-slate-600">Tenkan</span>
-              <span className="text-[10px] font-mono text-slate-400">{signal.ichimoku.tenkanSen.toFixed(4)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[10px] text-slate-600">Kijun</span>
-              <span className="text-[10px] font-mono text-slate-400">{signal.ichimoku.kijunSen.toFixed(4)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[10px] text-slate-600">Cloud Top</span>
-              <span className="text-[10px] font-mono text-slate-400">{signal.ichimoku.cloudTop.toFixed(4)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[10px] text-slate-600">Cloud Bot</span>
-              <span className="text-[10px] font-mono text-slate-400">{signal.ichimoku.cloudBottom.toFixed(4)}</span>
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-              signal.ichimoku.priceAboveCloud ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-              signal.ichimoku.priceBelowCloud ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-              'bg-slate-600/10 text-slate-400 border border-slate-600/20'
-            }`}>
-              {signal.ichimoku.priceAboveCloud ? '↑ Above Cloud' :
-               signal.ichimoku.priceBelowCloud ? '↓ Below Cloud' : '○ In Cloud'}
-            </span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-              signal.ichimoku.futureCloudGreen ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
-            }`}>
-              {signal.ichimoku.futureCloudGreen ? '↑ Future Green' : '↓ Future Red'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Bollinger Details */}
-      {signal.bollinger && (
-        <div className="py-3 border-t border-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-500 uppercase font-semibold">Bollinger Bands</span>
-            <span className="text-[10px] font-mono text-slate-400">
-              %B: {(signal.bollinger.percentB * 100).toFixed(1)}%
-            </span>
-          </div>
-          <div className="mt-1 flex items-center gap-3">
-            <span className="text-[10px] text-slate-600">U: {signal.bollinger.upper.toFixed(3)}</span>
-            <span className="text-[10px] text-slate-600">M: {signal.bollinger.middle.toFixed(3)}</span>
-            <span className="text-[10px] text-slate-600">L: {signal.bollinger.lower.toFixed(3)}</span>
-          </div>
-        </div>
-      )}
-
-      {/* MA Details */}
-      {signal.ma && (
-        <div className="py-3 border-t border-slate-800">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-slate-500 uppercase font-semibold">Moving Averages</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-              signal.ma.ema20AboveEma50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
-            }`}>
-              {signal.ma.ema20AboveEma50 ? 'EMA20 > EMA50' : 'EMA20 < EMA50'}
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] text-slate-600">EMA20: {signal.ma.ema20.toFixed(3)}</span>
-            <span className="text-[10px] text-slate-600">EMA50: {signal.ma.ema50.toFixed(3)}</span>
-          </div>
-        </div>
-      )}
+      <p className="text-[10px] text-slate-500 mt-3">{signal.reason}</p>
     </div>
   );
 }
@@ -534,7 +420,7 @@ export function App() {
 
   // Generate signal — memoized on candle changes
   const signal = useMemo(() => {
-    if (allCandles.length < 52) return null;
+    if (allCandles.length < 100) return null;
     const newSignal = generateSignal(allCandles);
     return newSignal;
   }, [allCandles]);
@@ -583,7 +469,7 @@ export function App() {
 
   // ─── Loading State ────────────────────────────────────────────────────────
 
-  if (allCandles.length < 52) {
+  if (allCandles.length < 100) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="text-center max-w-sm">
@@ -599,13 +485,13 @@ export function App() {
             <ConnectionBadge connected={isConnected} error={error} reconnectCount={reconnectCount} lastTickTime={lastTickTime} />
           </div>
           <div className="space-y-2 text-xs text-slate-600">
-            <div>Candles loaded: <span className="text-blue-400 font-mono font-bold">{allCandles.length}</span> / 52 minimum</div>
+            <div>Candles loaded: <span className="text-blue-400 font-mono font-bold">{allCandles.length}</span> / 100 minimum</div>
             <div>Ticks received: <span className="text-blue-400 font-mono font-bold">{tickCount}</span></div>
           </div>
           <div className="w-56 h-1.5 bg-slate-800 rounded-full mt-4 mx-auto overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-blue-500 to-emerald-400 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min((allCandles.length / 52) * 100, 100)}%` }}
+              style={{ width: `${Math.min((allCandles.length / 100) * 100, 100)}%` }}
             />
           </div>
         </div>
@@ -628,7 +514,7 @@ export function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold text-white tracking-tight leading-tight">R_50 Signal Engine</h1>
-              <p className="text-[9px] text-slate-500 leading-tight">Ichimoku Cloud + 7 Indicators • 2min TF • 5min Expiry</p>
+              <p className="text-[9px] text-slate-500 leading-tight">Ichimoku + 5 Setups (6 Sources) • 2min TF • 5min Expiry</p>
             </div>
           </div>
 
@@ -670,11 +556,11 @@ export function App() {
               <IndicatorDetails signal={stableSignal} />
             </div>
 
-            {/* Right: Indicator Analysis Cards */}
+            {/* Right: 6 Signal Sources Cards */}
             <div className="lg:col-span-7 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Indicator Analysis
+                  6 Signal Sources
                 </h2>
                 <div className="flex items-center gap-2 text-[10px] text-slate-600">
                   <span>{allCandles.length} candles</span>
