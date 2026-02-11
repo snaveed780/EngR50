@@ -91,6 +91,24 @@ function hasStrongBearishBody(candle: Candle): boolean {
   return body > 0 && body / range >= 0.6;
 }
 
+function didHistogramCrossZeroWithinTicks(candles: Candle[], ticks: number, direction: 'up' | 'down'): boolean {
+  const start = Math.max(2, candles.length - ticks - 1);
+
+  for (let i = start; i < candles.length; i++) {
+    const prevMacd = calcMACDSeries(candles.slice(0, i), 6, 13, 5);
+    const currMacd = calcMACDSeries(candles.slice(0, i + 1), 6, 13, 5);
+    if (!prevMacd || !currMacd) continue;
+
+    const crossedUp = prevMacd.histogram <= 0 && currMacd.histogram > 0;
+    const crossedDown = prevMacd.histogram >= 0 && currMacd.histogram < 0;
+
+    if (direction === 'up' && crossedUp) return true;
+    if (direction === 'down' && crossedDown) return true;
+  }
+
+  return false;
+}
+
 export function generateSignal(candles: Candle[]): SignalResult {
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
@@ -239,14 +257,42 @@ export function generateSignal(candles: Candle[]): SignalResult {
 
   // 5) Trend Filter
   if (macdTrend && ema50.length > prev && ema21.length > prev) {
+    const MACD_ZERO_CROSS_LOOKBACK_TICKS = 18;
+    const MIN_EMA50_DISTANCE = 0.04;
+    const EMA50_FLAT_SLOPE_THRESHOLD = 0.01;
+
     const macdBullCross = macdTrend.previousMacd <= macdTrend.previousSignal && macdTrend.macd > macdTrend.signal;
     const macdBearCross = macdTrend.previousMacd >= macdTrend.previousSignal && macdTrend.macd < macdTrend.signal;
-    const histTurnsPositive = macdTrend.previousHistogram <= 0 && macdTrend.histogram > 0;
-    const histTurnsNegative = macdTrend.previousHistogram >= 0 && macdTrend.histogram < 0;
+    const histogramIncreasing = macdTrend.histogram > macdTrend.previousHistogram;
+    const histogramDecreasing = macdTrend.histogram < macdTrend.previousHistogram;
+    const histogramNonNegative = macdTrend.histogram >= 0;
+    const histogramNonPositive = macdTrend.histogram <= 0;
+    const histogramCrossedUpRecently = didHistogramCrossZeroWithinTicks(candles, MACD_ZERO_CROSS_LOOKBACK_TICKS, 'up');
+    const histogramCrossedDownRecently = didHistogramCrossZeroWithinTicks(candles, MACD_ZERO_CROSS_LOOKBACK_TICKS, 'down');
+
+    const ema50Distance = close - ema50[last];
+    const ema50Slope = ema50[last] - ema50[prev];
+    const ema50IsFlat = Math.abs(ema50Slope) < EMA50_FLAT_SLOPE_THRESHOLD;
+
+    const riseCond =
+      !ema50IsFlat &&
+      close > ema50[last] &&
+      ema50Distance >= MIN_EMA50_DISTANCE &&
+      macdBullCross &&
+      histogramIncreasing &&
+      (histogramNonNegative || histogramCrossedUpRecently);
+
+    const fallCond =
+      !ema50IsFlat &&
+      close < ema50[last] &&
+      ema50Distance <= -MIN_EMA50_DISTANCE &&
+      macdBearCross &&
+      histogramDecreasing &&
+      (histogramNonPositive || histogramCrossedDownRecently);
 
     let direction: SignalDirection = 'NEUTRAL';
-    if (close > ema50[last] && histTurnsPositive && macdBullCross) direction = 'RISE';
-    if (close < ema50[last] && histTurnsNegative && macdBearCross) direction = 'FALL';
+    if (riseCond) direction = 'RISE';
+    if (fallCond) direction = 'FALL';
 
     const ema50Rising = ema50[last] > ema50[prev];
     const ema21Rising = ema21[last] > ema21[prev];
@@ -266,7 +312,10 @@ export function generateSignal(candles: Candle[]): SignalResult {
       name: 'Trend Filter',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : isStrongSignal ? 85 : 75,
-      detail: `EMA50 ${ema50[last].toFixed(2)} · MACD Hist ${macdTrend.histogram.toFixed(4)}${isStrongSignal ? ' · STRONG' : ''}`,
+      detail:
+        `EMA50 ${ema50[last].toFixed(2)} · Δ${ema50Distance.toFixed(4)} · slope ${ema50Slope.toFixed(4)} · ` +
+        `MACD Hist ${macdTrend.histogram.toFixed(4)} (${macdTrend.previousHistogram.toFixed(4)}→${macdTrend.histogram.toFixed(4)})` +
+        `${ema50IsFlat ? ' · FLAT EMA50 SKIP' : ''}${isStrongSignal ? ' · STRONG' : ''}`,
       weight: 1,
       isStrongSignal,
     });
