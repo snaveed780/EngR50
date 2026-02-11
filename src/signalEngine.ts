@@ -8,6 +8,7 @@ import {
   calcMACD,
   calcMA,
   calcADX,
+  calcSupportResistance,
   type IchimokuResult,
   type BollingerResult,
   type RSIResult,
@@ -16,6 +17,7 @@ import {
   type MACDResult,
   type MAResult,
   type ADXResult,
+  type SupportResistanceResult,
 } from './indicators';
 
 // ─── Signal Types ────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ export interface SignalResult {
   macd: MACDResult | null;
   ma: MAResult | null;
   adx: ADXResult | null;
+  supportResistance: SupportResistanceResult | null;
   reason: string;
 }
 
@@ -65,6 +68,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
   const macd = calcMACD(candles);
   const ma = calcMA(candles);
   const adx = calcADX(candles);
+  const supportResistance = calcSupportResistance(candles, 30);
 
   // ─── 1. ICHIMOKU CLOUD (Primary - weight 2.0) ──────────────────────────
 
@@ -391,6 +395,37 @@ export function generateSignal(candles: Candle[]): SignalResult {
     });
   }
 
+  // ─── 9. SUPPORT / RESISTANCE (2m structure context) ───────────────────
+
+  if (supportResistance) {
+    let direction: 'RISE' | 'FALL' | 'NEUTRAL' = 'NEUTRAL';
+    let confidence = 35;
+    const details: string[] = [];
+
+    if (supportResistance.bullishBounceZone && !supportResistance.bearishRejectionZone) {
+      direction = 'RISE';
+      confidence = 68;
+      details.push('Near support (2m bounce zone)');
+    } else if (supportResistance.bearishRejectionZone && !supportResistance.bullishBounceZone) {
+      direction = 'FALL';
+      confidence = 68;
+      details.push('Near resistance (2m rejection zone)');
+    } else {
+      details.push('Between key levels');
+    }
+
+    details.push(`S: ${supportResistance.support.toFixed(2)}`);
+    details.push(`R: ${supportResistance.resistance.toFixed(2)}`);
+
+    indicators.push({
+      name: 'Support/Resistance (2m)',
+      direction,
+      confidence: Math.min(confidence, 88),
+      detail: details.join(' · '),
+      weight: 1.1,
+    });
+  }
+
   // ─── DECISION ENGINE ───────────────────────────────────────────────────
 
   const directionalIndicators = indicators.filter(i => i.name !== 'ATR (14)');
@@ -504,6 +539,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     macd,
     ma,
     adx,
+    supportResistance,
     reason,
   };
 }

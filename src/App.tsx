@@ -138,7 +138,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
         {/* Signal Direction */}
         <div className="text-center mb-3">
           <div className="text-[10px] text-slate-500 uppercase tracking-[0.4em] mb-2 font-semibold">
-            R_50 Signal • 5 Min Expiry
+            R_50 Signal • 2m Structure + 5m Expiry
           </div>
           <div
             className={`text-5xl sm:text-6xl md:text-7xl font-black tracking-tight leading-none ${
@@ -206,7 +206,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
             <div className="w-px h-8 bg-slate-700" />
             <div className="text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-widest">Expiry</div>
-              <div className="text-base sm:text-lg font-bold text-blue-300">5 min</div>
+              <div className="text-base sm:text-lg font-bold text-blue-300">5 min (2m candles)</div>
             </div>
           </div>
         )}
