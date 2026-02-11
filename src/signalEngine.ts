@@ -79,6 +79,18 @@ function isBearishTrapCandle(candle: Candle): boolean {
   return upperWick >= body * 2 && lowerWick <= body;
 }
 
+function hasStrongBullishBody(candle: Candle): boolean {
+  const range = Math.max(candle.high - candle.low, 1e-9);
+  const body = candle.close - candle.open;
+  return body > 0 && body / range >= 0.6;
+}
+
+function hasStrongBearishBody(candle: Candle): boolean {
+  const range = Math.max(candle.high - candle.low, 1e-9);
+  const body = candle.open - candle.close;
+  return body > 0 && body / range >= 0.6;
+}
+
 export function generateSignal(candles: Candle[]): SignalResult {
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
@@ -159,27 +171,53 @@ export function generateSignal(candles: Candle[]): SignalResult {
     });
   }
 
-  // 2) RSI + MA + S/R L
+  // 2) Setup 1 — Reversal Mode
   const currentRsi7 = rsi7Series[last];
+  const previousRsi7 = rsi7Series[prev];
   const currentEma21 = ema21[last];
-  if (Number.isFinite(currentRsi7) && Number.isFinite(currentEma21)) {
+  if (Number.isFinite(currentRsi7) && Number.isFinite(currentEma21) && candles.length > 1) {
+    const currentCandle = candles[last];
+    const previousCandle = candles[prev];
     const nearSupport = isNearLevel(close, supportResistance.nearestSupport, 0.1);
     const nearResistance = isNearLevel(close, supportResistance.nearestResistance, 0.1);
 
-    let direction: SignalDirection = 'NEUTRAL';
-    if (nearSupport && currentRsi7 < 25 && close > currentEma21) direction = 'RISE';
-    if (nearResistance && currentRsi7 > 75 && close < currentEma21) direction = 'FALL';
+    const bullishCandleConfirmation =
+      currentCandle.close > previousCandle.high ||
+      hasStrongBullishBody(currentCandle);
+    const bearishCandleConfirmation =
+      currentCandle.close < previousCandle.low ||
+      hasStrongBearishBody(currentCandle);
+
+    let reversalDirection: SignalDirection = 'NEUTRAL';
+    if (nearSupport && currentRsi7 < 25 && bullishCandleConfirmation) reversalDirection = 'RISE';
+    if (nearResistance && currentRsi7 > 75 && bearishCandleConfirmation) reversalDirection = 'FALL';
 
     indicators.push({
-      name: 'RSI + MA + S/R L',
-      direction,
-      confidence: direction === 'NEUTRAL' ? 45 : 72,
-      detail: `RSI7 ${currentRsi7.toFixed(1)} · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
+      name: 'Setup 1: Reversal Mode',
+      direction: reversalDirection,
+      confidence: reversalDirection === 'NEUTRAL' ? 45 : 74,
+      detail: `RSI7 ${currentRsi7.toFixed(1)} · ${bullishCandleConfirmation ? 'Bull conf ✓' : 'Bull conf ✗'} · ${bearishCandleConfirmation ? 'Bear conf ✓' : 'Bear conf ✗'} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
+      weight: 1,
+    });
+
+    // 3) Setup 1 — Trend-Continuation Mode
+    const rsiRecoveredAbove30 = Number.isFinite(previousRsi7) && previousRsi7 <= 30 && currentRsi7 > 30;
+    const rsiDroppedBelow70 = Number.isFinite(previousRsi7) && previousRsi7 >= 70 && currentRsi7 < 70;
+
+    let continuationDirection: SignalDirection = 'NEUTRAL';
+    if (close > currentEma21 && nearSupport && rsiRecoveredAbove30) continuationDirection = 'RISE';
+    if (close < currentEma21 && nearResistance && rsiDroppedBelow70) continuationDirection = 'FALL';
+
+    indicators.push({
+      name: 'Setup 1: Trend-Continuation Mode',
+      direction: continuationDirection,
+      confidence: continuationDirection === 'NEUTRAL' ? 45 : 72,
+      detail: `RSI7 ${currentRsi7.toFixed(1)} (${rsiRecoveredAbove30 ? '↑30' : rsiDroppedBelow70 ? '↓70' : '—'}) · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
       weight: 1,
     });
   }
 
-  // 3) EMA Crossover & Stochastic
+  // 4) EMA Crossover & Stochastic
   if (ema5.length > prev && ema13.length > prev && stochastic) {
     const emaBullCross = ema5[prev] <= ema13[prev] && ema5[last] > ema13[last];
     const emaBearCross = ema5[prev] >= ema13[prev] && ema5[last] < ema13[last];
@@ -199,7 +237,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     });
   }
 
-  // 4) Trend Filter
+  // 5) Trend Filter
   if (macdTrend && ema50.length > prev && ema21.length > prev) {
     const macdBullCross = macdTrend.previousMacd <= macdTrend.previousSignal && macdTrend.macd > macdTrend.signal;
     const macdBearCross = macdTrend.previousMacd >= macdTrend.previousSignal && macdTrend.macd < macdTrend.signal;
