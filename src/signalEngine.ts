@@ -11,6 +11,8 @@ import {
 export type SignalDirection = 'RISE' | 'FALL' | 'NEUTRAL';
 export type SignalStrength = 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE';
 
+const MIN_ANALYSIS_CANDLES = 200;
+
 export interface IndicatorSignal {
   name: string;
   direction: SignalDirection;
@@ -348,6 +350,29 @@ function getStochasticCrossMeta(candles: Candle[], maxBarsSinceCross: number): {
 }
 
 export function generateSignal(candles: Candle[]): SignalResult {
+  if (candles.length < MIN_ANALYSIS_CANDLES) {
+    return {
+      direction: 'NEUTRAL',
+      strength: 'NONE',
+      confidence: 0,
+      confidenceScore: `0/0`,
+      combinedLabel: 'NEUTRAL',
+      indicators: [],
+      riseCount: 0,
+      fallCount: 0,
+      neutralCount: 0,
+      timestamp: Date.now(),
+      ichimoku: null,
+      supportResistance: { supports: [], resistances: [], nearestSupport: null, nearestResistance: null },
+      stochastic: null,
+      macdTrend: null,
+      ema21: null,
+      ema50: null,
+      rsi7: null,
+      reason: `Waiting for ${MIN_ANALYSIS_CANDLES} closed 2-minute Japanese candles.`,
+    };
+  }
+
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
   const prev = Math.max(0, last - 1);
