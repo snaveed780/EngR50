@@ -2,6 +2,9 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { useDerivTicks } from './useDerivTicks';
 import { generateSignal, type SignalResult, type IndicatorSignal } from './signalEngine';
 
+const EXECUTION_TF = '2m';
+const CANDLE_CLOSE_INTERVAL_MS = 2 * 60 * 1000;
+
 function PulsingDot({ color }: { color: string }) {
   return (
     <span className="relative flex h-3 w-3">
@@ -49,7 +52,7 @@ function IndicatorCard({ indicator }: { indicator: IndicatorSignal }) {
   );
 }
 
-function SignalPanel({ signal }: { signal: SignalResult }) {
+function SignalPanel({ signal, candleCloseTime }: { signal: SignalResult; candleCloseTime: string }) {
   const isRise = signal.direction === 'RISE';
   const isFall = signal.direction === 'FALL';
 
@@ -66,7 +69,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
   return (
     <div className={`rounded-2xl border-2 p-5 bg-gradient-to-br ${tone} to-transparent`}>
       <div className="text-center space-y-3">
-        <div className="text-[10px] text-slate-500 uppercase tracking-[0.3em]">R_50 Combined Signal • 2m Candles</div>
+        <div className="text-[10px] text-slate-500 uppercase tracking-[0.3em]">R_50 Combined Signal • {EXECUTION_TF} Candles</div>
         <div className="text-5xl font-black tracking-tight">{signal.combinedLabel}</div>
         <div className="flex items-center justify-center gap-6 text-sm">
           <div>
@@ -82,6 +85,7 @@ function SignalPanel({ signal }: { signal: SignalResult }) {
             <div className="font-bold">{signal.confidenceScore}</div>
           </div>
         </div>
+        <div className="text-[11px] text-slate-400">Candle closes in <span className="font-mono text-sky-300">{candleCloseTime}</span></div>
         <div className="flex items-center justify-center gap-4 text-xs text-slate-400">
           <span>Rise: <strong className="text-emerald-400">{signal.riseCount}</strong></span>
           <span>Fall: <strong className="text-red-400">{signal.fallCount}</strong></span>
@@ -133,6 +137,16 @@ export function App() {
 
   const priceStr = currentTick?.price?.toFixed(4) ?? '—';
 
+  const candleCloseTime = useMemo(() => {
+    if (!currentCandle) return '—';
+    const closeTs = currentCandle.timestamp + CANDLE_CLOSE_INTERVAL_MS;
+    const remainingMs = Math.max(0, closeTs - currentTime.getTime());
+    const totalSeconds = Math.floor(remainingMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }, [currentCandle, currentTime]);
+
   if (allCandles.length < 100) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -154,28 +168,31 @@ export function App() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <div>
             <h1 className="text-sm font-bold text-white tracking-tight">R_50 Signal Engine</h1>
-            <p className="text-[9px] text-slate-500">Ichimoku + 5 New Setups • 2min TF • Japanese Candles</p>
+            <p className="text-[9px] text-slate-500">Ichimoku + Signal Matrix • {EXECUTION_TF} TF • Japanese Candles</p>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
               <div className="text-[9px] text-slate-500 uppercase">R_50</div>
               <div className="text-base font-mono font-bold">{priceStr}</div>
             </div>
-            <div className="text-[10px] text-slate-500">{currentTime.toLocaleTimeString()}</div>
+            <div className="text-right">
+              <div className="text-[10px] text-slate-500">{currentTime.toLocaleTimeString()}</div>
+              <div className="text-[10px] text-slate-500">Close in: <span className="text-sky-300 font-mono">{candleCloseTime}</span></div>
+            </div>
             <ConnectionBadge connected={isConnected} error={error} />
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-3 sm:px-4 py-5 space-y-5">
-        {stableSignal && <SignalPanel signal={stableSignal} />}
+        {stableSignal && <SignalPanel signal={stableSignal} candleCloseTime={candleCloseTime} />}
 
         {stableSignal && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <div className="lg:col-span-8 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Signal Sources (6)</h2>
-                <div className="text-[10px] text-slate-600">2m timeframe • {allCandles.length} candles</div>
+                <div className="text-[10px] text-slate-600">{EXECUTION_TF} timeframe • {allCandles.length} candles</div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {stableSignal.indicators.map((ind) => (
@@ -205,7 +222,7 @@ export function App() {
 
       <footer className="border-t border-slate-800/50 mt-4 py-4">
         <div className="max-w-7xl mx-auto px-4 flex items-center justify-between text-[10px] text-slate-600">
-          <span>R_50 Signal Engine • 6-source consensus • 2m candles</span>
+          <span>R_50 Signal Engine • 6-source consensus • {EXECUTION_TF} candles</span>
           <span>Reconnects: <span className="text-blue-400 font-mono">{reconnectCount}</span></span>
         </div>
       </footer>
