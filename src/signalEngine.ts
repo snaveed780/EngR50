@@ -171,7 +171,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (nearResistance && currentRsi7 > 75 && close < currentEma21) direction = 'FALL';
 
     indicators.push({
-      name: 'RSI + MA + S/R L',
+      name: 'Reversal Mode',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 72,
       detail: `RSI7 ${currentRsi7.toFixed(1)} · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
@@ -191,7 +191,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (emaBearCross && stochastic.k > 80 && stochBearCross) direction = 'FALL';
 
     indicators.push({
-      name: 'EMA Crossover & Stochastic',
+      name: 'Trend-Continuation Mode',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 74,
       detail: `EMA5 ${ema5[last].toFixed(2)} / EMA13 ${ema13[last].toFixed(2)} · K ${stochastic.k.toFixed(1)} D ${stochastic.d.toFixed(1)}`,
