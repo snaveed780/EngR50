@@ -213,19 +213,25 @@ export function useDerivTicks(): DerivTicksState {
 
           // Handle historical candles response
           if (data.candles) {
-            const historicalCandles: Candle[] = data.candles.map((c: { epoch: number; open: string; high: string; low: string; close: string }) => ({
-              open: parseFloat(c.open),
-              high: parseFloat(c.high),
-              low: parseFloat(c.low),
-              close: parseFloat(c.close),
-              timestamp: c.epoch * 1000,
-            }));
+            const nowBucket = getCandleTimestamp(Date.now());
+            const historicalCandles: Candle[] = data.candles
+              .map((c: { epoch: number; open: string; high: string; low: string; close: string }) => ({
+                open: parseFloat(c.open),
+                high: parseFloat(c.high),
+                low: parseFloat(c.low),
+                close: parseFloat(c.close),
+                timestamp: c.epoch * 1000,
+              }))
+              .filter(c => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close))
+              .filter(c => c.timestamp % CANDLE_INTERVAL_MS === 0)
+              .filter(c => c.timestamp < nowBucket) // closed candles only for signal accuracy
+              .sort((a, b) => a.timestamp - b.timestamp);
 
             candlesRef.current = historicalCandles.slice(-MAX_CANDLES);
             currentCandleRef.current = null;
             setCandles([...candlesRef.current]);
 
-            // Subscribe to live ticks
+            // Subscribe to live ticks (used to build the current in-progress candle)
             ws.send(JSON.stringify({
               ticks: SYMBOL,
               subscribe: 1,
