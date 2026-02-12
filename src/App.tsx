@@ -169,7 +169,9 @@ export function App() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <div>
             <h1 className="text-sm font-bold text-white tracking-tight">R_50 Signal Engine</h1>
-            <p className="text-[9px] text-slate-500">Ichimoku + 5 New Setups • {EXECUTION_TF} TF • Japanese Candles</p>
+codex/update-strategy-setup-execution-and-context-timeframes-xuj3
+           <p className="text-[9px] text-slate-500">Ichimoku + 5 New Setups • {EXECUTION_TF} TF • Japanese Candles</p>
+main
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
