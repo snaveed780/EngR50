@@ -5,6 +5,7 @@ const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 const SYMBOL = 'R_50';
 const CANDLE_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const MAX_CANDLES = 200;
+const GRANULARITY_SECONDS = 120; // hard-locked to 2-minute timeframe
 const PING_INTERVAL = 25000; // 25s keepalive
 const STALE_TIMEOUT = 15000; // 15s no tick = stale
 const RECONNECT_DELAYS = [1000, 2000, 3000, 5000, 8000]; // progressive backoff
@@ -163,8 +164,8 @@ export function useDerivTicks(): DerivTicksState {
           adjust_start_time: 1,
           count: MAX_CANDLES,
           end: 'latest',
-          granularity: 120,
-          style: 'candles',
+          granularity: GRANULARITY_SECONDS,
+          style: 'candles', // Japanese candlesticks (not Heiken Ashi)
         }));
 
         // Start keepalive ping

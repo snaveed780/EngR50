@@ -11,6 +11,8 @@ import {
 export type SignalDirection = 'RISE' | 'FALL' | 'NEUTRAL';
 export type SignalStrength = 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE';
 
+const MIN_ANALYSIS_CANDLES = 200;
+
 export interface IndicatorSignal {
   name: string;
   direction: SignalDirection;
@@ -348,6 +350,29 @@ function getStochasticCrossMeta(candles: Candle[], maxBarsSinceCross: number): {
 }
 
 export function generateSignal(candles: Candle[]): SignalResult {
+  if (candles.length < MIN_ANALYSIS_CANDLES) {
+    return {
+      direction: 'NEUTRAL',
+      strength: 'NONE',
+      confidence: 0,
+      confidenceScore: `0/0`,
+      combinedLabel: 'NEUTRAL',
+      indicators: [],
+      riseCount: 0,
+      fallCount: 0,
+      neutralCount: 0,
+      timestamp: Date.now(),
+      ichimoku: null,
+      supportResistance: { supports: [], resistances: [], nearestSupport: null, nearestResistance: null },
+      stochastic: null,
+      macdTrend: null,
+      ema21: null,
+      ema50: null,
+      rsi7: null,
+      reason: `Waiting for ${MIN_ANALYSIS_CANDLES} closed 2-minute Japanese candles.`,
+    };
+  }
+
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
   const prev = Math.max(0, last - 1);
@@ -449,7 +474,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (nearResistance && currentRsi7 > 75 && bearishCandleConfirmation) reversalDirection = 'FALL';
 
     indicators.push({
-      name: 'Setup 1: Reversal Mode',
+      name: 'Reversal Mode',
       direction: reversalDirection,
       confidence: reversalDirection === 'NEUTRAL' ? 45 : 74,
       detail: `RSI7 ${currentRsi7.toFixed(1)} · ${bullishCandleConfirmation ? 'Bull conf ✓' : 'Bull conf ✗'} · ${bearishCandleConfirmation ? 'Bear conf ✓' : 'Bear conf ✗'} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
@@ -465,7 +490,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (close < currentEma21 && nearResistance && rsiDroppedBelow70) continuationDirection = 'FALL';
 
     indicators.push({
-      name: 'Setup 1: Trend-Continuation Mode',
+      name: 'Trend-Continuation Mode',
       direction: continuationDirection,
       confidence: continuationDirection === 'NEUTRAL' ? 45 : 72,
       detail: `RSI7 ${currentRsi7.toFixed(1)} (${rsiRecoveredAbove30 ? '↑30' : rsiDroppedBelow70 ? '↓70' : '—'}) · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
@@ -628,7 +653,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (fallPrefiltersOk && currCandle.close < ema9[last] && rsiBearCross50 && prevGreen && currRed) direction = 'FALL';
 
     indicators.push({
-      name: 'Setup 4: Scalp Machine',
+      name: 'Scalp Machine',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 76,
       detail:
@@ -647,7 +672,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
   if (ema21.length > last && rsi6.length > last) {
     const candleTrap = detectCandleTrap(candles, ema21, rsi6);
     indicators.push({
-      name: 'Setup 5: The Candle Trap',
+      name: 'The Candle Trap',
       direction: candleTrap.signal,
       confidence: candleTrap.confidence,
       detail: `${candleTrap.reason} · RSI6 ${typeof candleTrap.indicators.rsi6 === 'number' ? candleTrap.indicators.rsi6.toFixed(1) : '—'} · EMA21 ${typeof candleTrap.indicators.ema21 === 'number' ? candleTrap.indicators.ema21.toFixed(2) : '—'} · Grade ${candleTrap.grade ?? '—'}`,
