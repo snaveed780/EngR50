@@ -4,6 +4,7 @@ import { generateSignal, type SignalResult, type IndicatorSignal } from './signa
 
 const EXECUTION_TF = '2m';
 const CANDLE_CLOSE_INTERVAL_MS = 2 * 60 * 1000;
+const MIN_ANALYSIS_CANDLES = 200;
 
 function PulsingDot({ color }: { color: string }) {
   return (
@@ -121,7 +122,7 @@ export function App() {
   const closedCandles = useMemo(() => candles, [candles]);
 
   const signal = useMemo(() => {
-    if (closedCandles.length < 100) return null;
+    if (closedCandles.length < MIN_ANALYSIS_CANDLES) return null;
     return generateSignal(closedCandles);
   }, [closedCandles]);
 
@@ -148,14 +149,14 @@ export function App() {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   }, [currentCandle, currentTime]);
 
-  if (allCandles.length < 100) {
+  if (allCandles.length < MIN_ANALYSIS_CANDLES) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="text-center">
           <h2 className="text-xl font-bold text-slate-300 mb-2">Initializing Signal Engine</h2>
-          <p className="text-sm text-slate-500 mb-4">Loading 100 candles for indicator warm-up...</p>
+          <p className="text-sm text-slate-500 mb-4">Loading 200 candles for indicator warm-up...</p>
           <div className="space-y-1 text-xs text-slate-600">
-            <div>Candles: <span className="text-blue-400 font-mono">{allCandles.length}/100</span></div>
+            <div>Candles: <span className="text-blue-400 font-mono">{allCandles.length}/{MIN_ANALYSIS_CANDLES}</span></div>
             <div>Ticks: <span className="text-blue-400 font-mono">{tickCount}</span></div>
           </div>
         </div>
@@ -169,9 +170,7 @@ export function App() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <div>
             <h1 className="text-sm font-bold text-white tracking-tight">R_50 Signal Engine</h1>
-codex/update-strategy-setup-execution-and-context-timeframes-xuj3
-           <p className="text-[9px] text-slate-500">Ichimoku + 5 New Setups • {EXECUTION_TF} TF • Japanese Candles</p>
-main
+            <p className="text-[9px] text-slate-500">Ichimoku + 5 New Setups • {EXECUTION_TF} TF • Japanese Candles</p>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
