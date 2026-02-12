@@ -11,6 +11,8 @@ import {
 export type SignalDirection = 'RISE' | 'FALL' | 'NEUTRAL';
 export type SignalStrength = 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE';
 
+const MIN_ANALYSIS_CANDLES = 200;
+
 export interface IndicatorSignal {
   name: string;
   direction: SignalDirection;
@@ -348,6 +350,29 @@ function getStochasticCrossMeta(candles: Candle[], maxBarsSinceCross: number): {
 }
 
 export function generateSignal(candles: Candle[]): SignalResult {
+  if (candles.length < MIN_ANALYSIS_CANDLES) {
+    return {
+      direction: 'NEUTRAL',
+      strength: 'NONE',
+      confidence: 0,
+      confidenceScore: `0/0`,
+      combinedLabel: 'NEUTRAL',
+      indicators: [],
+      riseCount: 0,
+      fallCount: 0,
+      neutralCount: 0,
+      timestamp: Date.now(),
+      ichimoku: null,
+      supportResistance: { supports: [], resistances: [], nearestSupport: null, nearestResistance: null },
+      stochastic: null,
+      macdTrend: null,
+      ema21: null,
+      ema50: null,
+      rsi7: null,
+      reason: `Waiting for ${MIN_ANALYSIS_CANDLES} closed 2-minute Japanese candles.`,
+    };
+  }
+
   const indicators: IndicatorSignal[] = [];
   const last = candles.length - 1;
   const prev = Math.max(0, last - 1);
@@ -434,8 +459,8 @@ export function generateSignal(candles: Candle[]): SignalResult {
   if (Number.isFinite(currentRsi7) && Number.isFinite(currentEma21) && candles.length > 1) {
     const currentCandle = candles[last];
     const previousCandle = candles[prev];
-    const nearSupport = isNearLevel(close, supportResistance.nearestSupport, 0.1);
-    const nearResistance = isNearLevel(close, supportResistance.nearestResistance, 0.1);
+    const nearSupport = isNearLevel(close, supportResistance.nearestSupport, 0.15);
+    const nearResistance = isNearLevel(close, supportResistance.nearestResistance, 0.15);
 
     const bullishCandleConfirmation =
       currentCandle.close > previousCandle.high ||
@@ -445,11 +470,11 @@ export function generateSignal(candles: Candle[]): SignalResult {
       hasStrongBearishBody(currentCandle);
 
     let reversalDirection: SignalDirection = 'NEUTRAL';
-    if (nearSupport && currentRsi7 < 25 && bullishCandleConfirmation) reversalDirection = 'RISE';
-    if (nearResistance && currentRsi7 > 75 && bearishCandleConfirmation) reversalDirection = 'FALL';
+    if (nearSupport && currentRsi7 < 30 && bullishCandleConfirmation) reversalDirection = 'RISE';
+    if (nearResistance && currentRsi7 > 70 && bearishCandleConfirmation) reversalDirection = 'FALL';
 
     indicators.push({
-      name: 'Setup 1: Reversal Mode',
+      name: 'Reversal Mode',
       direction: reversalDirection,
       confidence: reversalDirection === 'NEUTRAL' ? 45 : 74,
       detail: `RSI7 ${currentRsi7.toFixed(1)} · ${bullishCandleConfirmation ? 'Bull conf ✓' : 'Bull conf ✗'} · ${bearishCandleConfirmation ? 'Bear conf ✓' : 'Bear conf ✗'} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
@@ -457,15 +482,15 @@ export function generateSignal(candles: Candle[]): SignalResult {
     });
 
     // 3) Setup 1 — Trend-Continuation Mode
-    const rsiRecoveredAbove30 = Number.isFinite(previousRsi7) && previousRsi7 <= 30 && currentRsi7 > 30;
-    const rsiDroppedBelow70 = Number.isFinite(previousRsi7) && previousRsi7 >= 70 && currentRsi7 < 70;
+    const rsiRecoveredAbove30 = Number.isFinite(previousRsi7) && previousRsi7 <= 35 && currentRsi7 > 35;
+    const rsiDroppedBelow70 = Number.isFinite(previousRsi7) && previousRsi7 >= 65 && currentRsi7 < 65;
 
     let continuationDirection: SignalDirection = 'NEUTRAL';
     if (close > currentEma21 && nearSupport && rsiRecoveredAbove30) continuationDirection = 'RISE';
     if (close < currentEma21 && nearResistance && rsiDroppedBelow70) continuationDirection = 'FALL';
 
     indicators.push({
-      name: 'Setup 1: Trend-Continuation Mode',
+      name: 'Trend-Continuation Mode',
       direction: continuationDirection,
       confidence: continuationDirection === 'NEUTRAL' ? 45 : 72,
       detail: `RSI7 ${currentRsi7.toFixed(1)} (${rsiRecoveredAbove30 ? '↑30' : rsiDroppedBelow70 ? '↓70' : '—'}) · EMA21 ${currentEma21.toFixed(2)} · S ${supportResistance.nearestSupport?.toFixed(2) ?? '—'} · R ${supportResistance.nearestResistance?.toFixed(2) ?? '—'}`,
@@ -475,7 +500,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
 
   // 4) EMA Crossover & Stochastic
   if (ema5.length > prev && ema13.length > prev && stochastic) {
-    const MAX_BARS_SINCE_STOCH_CROSS = 1;
+    const MAX_BARS_SINCE_STOCH_CROSS = 2;
     const emaBullCross = ema5[prev] <= ema13[prev] && ema5[last] > ema13[last];
     const emaBearCross = ema5[prev] >= ema13[prev] && ema5[last] < ema13[last];
     const {
@@ -490,8 +515,8 @@ export function generateSignal(candles: Candle[]): SignalResult {
 
     const kRisingFromBelow20 = stochastic.previousK < 20 && stochastic.k > stochastic.previousK;
     const kFallingFromAbove80 = stochastic.previousK > 80 && stochastic.k < stochastic.previousK;
-    const kValidForRise = (bullCrossK !== null && bullCrossK < 25) || kRisingFromBelow20;
-    const kValidForFall = (bearCrossK !== null && bearCrossK > 75) || kFallingFromAbove80;
+    const kValidForRise = (bullCrossK !== null && bullCrossK < 30) || kRisingFromBelow20;
+    const kValidForFall = (bearCrossK !== null && bearCrossK > 70) || kFallingFromAbove80;
 
     let direction: SignalDirection = 'NEUTRAL';
     if (emaBullCross && stochBullCrossRecent && kValidForRise) direction = 'RISE';
@@ -511,9 +536,9 @@ export function generateSignal(candles: Candle[]): SignalResult {
 
   // 5) Trend Filter
   if (macdTrend && ema50.length > prev && ema21.length > prev) {
-    const MACD_ZERO_CROSS_LOOKBACK_TICKS = 18;
-    const MIN_EMA50_DISTANCE = 0.04;
-    const EMA50_FLAT_SLOPE_THRESHOLD = 0.01;
+    const MACD_ZERO_CROSS_LOOKBACK_TICKS = 24;
+    const MIN_EMA50_DISTANCE = 0.02;
+    const EMA50_FLAT_SLOPE_THRESHOLD = 0.008;
 
     const macdBullCross = macdTrend.previousMacd <= macdTrend.previousSignal && macdTrend.macd > macdTrend.signal;
     const macdBearCross = macdTrend.previousMacd >= macdTrend.previousSignal && macdTrend.macd < macdTrend.signal;
@@ -532,16 +557,16 @@ export function generateSignal(candles: Candle[]): SignalResult {
       !ema50IsFlat &&
       close > ema50[last] &&
       ema50Distance >= MIN_EMA50_DISTANCE &&
-      macdBullCross &&
-      histogramIncreasing &&
+      (macdBullCross || histogramCrossedUpRecently) &&
+      (histogramIncreasing || histogramNonNegative) &&
       (histogramNonNegative || histogramCrossedUpRecently);
 
     const fallCond =
       !ema50IsFlat &&
       close < ema50[last] &&
       ema50Distance <= -MIN_EMA50_DISTANCE &&
-      macdBearCross &&
-      histogramDecreasing &&
+      (macdBearCross || histogramCrossedDownRecently) &&
+      (histogramDecreasing || histogramNonPositive) &&
       (histogramNonPositive || histogramCrossedDownRecently);
 
     let direction: SignalDirection = 'NEUTRAL';
@@ -553,7 +578,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     const trendAgreeUp = ema50Rising && ema21Rising;
     const trendAgreeDown = !ema50Rising && !ema21Rising;
 
-    const pullbackToSR = isNearLevel(close, supportResistance.nearestSupport, 0.1) || isNearLevel(close, supportResistance.nearestResistance, 0.1);
+    const pullbackToSR = isNearLevel(close, supportResistance.nearestSupport, 0.18) || isNearLevel(close, supportResistance.nearestResistance, 0.18);
 
     const oscillatorConfirmsRise = (Number.isFinite(currentRsi7) && currentRsi7 < 30) || (stochastic ? stochastic.k < 20 && stochastic.k > stochastic.d : false);
     const oscillatorConfirmsFall = (Number.isFinite(currentRsi7) && currentRsi7 > 70) || (stochastic ? stochastic.k > 80 && stochastic.k < stochastic.d : false);
@@ -580,21 +605,21 @@ export function generateSignal(candles: Candle[]): SignalResult {
     const prevCandle = candles[prev];
     const currCandle = candles[last];
     const ema9Slope = ema9[last] - ema9[prev];
-    const EMA9_SLOPE_THRESHOLD = 0.01;
+    const EMA9_SLOPE_THRESHOLD = 0.007;
     const slopeSupportsRise = ema9Slope > EMA9_SLOPE_THRESHOLD;
     const slopeSupportsFall = ema9Slope < -EMA9_SLOPE_THRESHOLD;
 
     const atr14 = calcAtrAt(candles, last, 14);
     const currBody = getBodySize(currCandle);
-    const minBodyThreshold = atr14 * 0.35;
+    const minBodyThreshold = atr14 * 0.25;
     const bodyIsLargeEnough = currBody >= minBodyThreshold;
 
     const recentBodies = candles.slice(Math.max(0, last - 2), last + 1).map(getBodySize);
     const longBodyCount = recentBodies.filter(body => body >= minBodyThreshold).length;
-    const inHighLiquiditySession = longBodyCount >= 2;
+    const inHighLiquiditySession = longBodyCount >= 1;
 
     const priorSameDirectionSignalWithinCooldown = (direction: SignalDirection): boolean => {
-      const start = Math.max(1, last - 5);
+      const start = Math.max(1, last - 3);
       for (let i = start; i < last; i++) {
         if (setup4TriggerDirectionAt(candles, ema9, rsi3, i) === direction) return true;
       }
@@ -628,7 +653,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
     if (fallPrefiltersOk && currCandle.close < ema9[last] && rsiBearCross50 && prevGreen && currRed) direction = 'FALL';
 
     indicators.push({
-      name: 'Setup 4: Scalp Machine',
+      name: 'Scalp Machine',
       direction,
       confidence: direction === 'NEUTRAL' ? 45 : 76,
       detail:
@@ -647,7 +672,7 @@ export function generateSignal(candles: Candle[]): SignalResult {
   if (ema21.length > last && rsi6.length > last) {
     const candleTrap = detectCandleTrap(candles, ema21, rsi6);
     indicators.push({
-      name: 'Setup 5: The Candle Trap',
+      name: 'The Candle Trap',
       direction: candleTrap.signal,
       confidence: candleTrap.confidence,
       detail: `${candleTrap.reason} · RSI6 ${typeof candleTrap.indicators.rsi6 === 'number' ? candleTrap.indicators.rsi6.toFixed(1) : '—'} · EMA21 ${typeof candleTrap.indicators.ema21 === 'number' ? candleTrap.indicators.ema21.toFixed(2) : '—'} · Grade ${candleTrap.grade ?? '—'}`,
@@ -662,12 +687,12 @@ export function generateSignal(candles: Candle[]): SignalResult {
   const neutralCount = indicators.filter(i => i.direction === 'NEUTRAL').length;
 
   let combinedLabel: SignalResult['combinedLabel'] = 'NEUTRAL';
-  if (riseCount >= 5) combinedLabel = 'STRONG RISE';
-  else if (riseCount === 4) combinedLabel = 'RISE';
-  else if (riseCount === 3 && fallCount <= 1) combinedLabel = 'WEAK RISE';
-  else if (fallCount >= 5) combinedLabel = 'STRONG FALL';
-  else if (fallCount === 4) combinedLabel = 'FALL';
-  else if (fallCount === 3 && riseCount <= 1) combinedLabel = 'WEAK FALL';
+  if (riseCount >= 4) combinedLabel = 'STRONG RISE';
+  else if (riseCount === 3) combinedLabel = 'RISE';
+  else if (riseCount === 2 && fallCount <= 2) combinedLabel = 'WEAK RISE';
+  else if (fallCount >= 4) combinedLabel = 'STRONG FALL';
+  else if (fallCount === 3) combinedLabel = 'FALL';
+  else if (fallCount === 2 && riseCount <= 2) combinedLabel = 'WEAK FALL';
 
   const direction: SignalDirection =
     combinedLabel.includes('RISE') ? 'RISE' : combinedLabel.includes('FALL') ? 'FALL' : 'NEUTRAL';
