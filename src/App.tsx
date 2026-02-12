@@ -139,6 +139,10 @@ export function App() {
 
   const priceStr = currentTick?.price?.toFixed(4) ?? '—';
 
+  useEffect(() => {
+    document.title = currentTick?.price ? currentTick.price.toFixed(4) : '—';
+  }, [currentTick]);
+
   const candleCloseTime = useMemo(() => {
     if (!currentCandle) return '—';
     const closeTs = currentCandle.timestamp + CANDLE_CLOSE_INTERVAL_MS;
